@@ -15,6 +15,7 @@ const BRANCH_POLL_MS = Number(process.env.COPILOT_MONITOR_BRANCH_POLL_MS) || BRA
 const MAX_ERRORS = 5;
 const AZDO_RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798";
 const TOKEN_MAX_AGE_MS = 30 * 60_000;
+const CHECK_RUN_FIELDS = "{total_count,check_runs:[.check_runs[] | {id,name,status,conclusion,details_url,html_url,app:{name:.app.name,slug:.app.slug}}]} | @json";
 
 export function createFrequencyControl(initialMs, {
     now = Date.now,
@@ -40,8 +41,8 @@ export function createFrequencyControl(initialMs, {
             });
         },
         update(value) {
-            if (!Number.isInteger(value) || value < 30_000 || value > 600_000) {
-                throw new Error("Polling interval must be between 30 and 600 seconds.");
+            if (!Number.isInteger(value) || value < 30_000 || value > 900_000) {
+                throw new Error("Polling interval must be between 30 and 900 seconds.");
             }
             intervalMs = value;
             let remainingMs = null;
@@ -185,9 +186,15 @@ export function branchChecksMessage(repo, branch, head, checks) {
         + `https://github.com/${repo}/commit/${head}/checks`;
 }
 
+export function parseJsonPages(output) {
+    if (!output.trim()) throw new Error("GitHub returned no check-run pages.");
+    return output.trim().split(/\r?\n/).map((line) => JSON.parse(line));
+}
+
 async function gh(args) {
     try {
-        return JSON.parse((await exec("gh", args, { maxBuffer: 16 * 1024 * 1024 })).stdout);
+        const { stdout } = await exec("gh", args, { maxBuffer: 16 * 1024 * 1024 });
+        return args.includes("--jq") ? parseJsonPages(stdout) : JSON.parse(stdout);
     } catch (error) {
         // `gh pr checks` can exit non-zero while still printing valid JSON.
         if (args[0] === "pr" && args[1] === "checks" && error.stdout) {
@@ -201,8 +208,54 @@ async function gh(args) {
     }
 }
 
+export async function publicGitHubApi(endpoint, paginate = false, fetcher = fetch) {
+    if (!/^repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:commits|compare)\//.test(endpoint)) {
+        throw new Error("Public GitHub API fallback only supports repository commits and comparisons.");
+    }
+    const pages = [];
+    let url = new URL(endpoint, "https://api.github.com/");
+    for (let page = 0; url && page < 100; page++) {
+        const response = await fetcher(url, {
+            headers: { Accept: "application/vnd.github+json", "User-Agent": "copilot-monitors" },
+            redirect: "error",
+            signal: AbortSignal.timeout(30_000),
+        });
+        if (!response.ok) {
+            const rateLimited = response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0";
+            const error = new Error(`GitHub public API returned HTTP ${response.status} for ${endpoint}.`
+                + (rateLimited ? " Anonymous rate limit reached; authorize GitHub CLI for this organization's SSO." : ""));
+            error.permanent = response.status === 404;
+            throw error;
+        }
+        pages.push(await response.json());
+        if (!paginate) return pages[0];
+        const next = response.headers.get("link")?.split(",")
+            .map((part) => /<([^>]+)>;\s*rel="next"/.exec(part.trim()))
+            .find(Boolean)?.[1];
+        url = next ? new URL(next) : null;
+        if (url && (url.origin !== "https://api.github.com" || url.username || url.password)) {
+            throw new Error("GitHub API pagination attempted to leave api.github.com.");
+        }
+    }
+    if (url) throw new Error(`GitHub API returned more than 100 pages for ${endpoint}.`);
+    return pages;
+}
+
+export async function githubApi(endpoint, paginate = false, runGh = gh, readPublic = publicGitHubApi) {
+    try {
+        const compactChecks = paginate && /\/check-runs\?per_page=100$/.test(endpoint);
+        const args = compactChecks
+            ? ["api", "--paginate", "--jq", CHECK_RUN_FIELDS, endpoint]
+            : ["api", ...(paginate ? ["--paginate", "--slurp"] : []), endpoint];
+        return await runGh(args);
+    } catch (error) {
+        if (!/SAML enforcement/i.test(error.message)) throw error;
+        return readPublic(endpoint, paginate);
+    }
+}
+
 export async function branchCheckRuns(repo, head,
-    readPages = (endpoint) => gh(["api", "--paginate", "--slurp", endpoint]),
+    readPages = (endpoint) => githubApi(endpoint, true),
     retry = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
     let received = 0;
     let expected = 0;
@@ -234,9 +287,9 @@ function branchStages(checks) {
 }
 
 export async function watchBranch(repo, branch, {
-    getCommit = () => gh(["api", `repos/${repo}/commits/${encodeURIComponent(branch)}`]),
+    getCommit = () => githubApi(`repos/${repo}/commits/${encodeURIComponent(branch)}`),
     getChecks = (head) => branchCheckRuns(repo, head),
-    compare = (previous, head) => gh(["api", `repos/${repo}/compare/${previous}...${head}`]),
+    compare = (previous, head) => githubApi(`repos/${repo}/compare/${previous}...${head}`),
     wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     emit = (line) => process.stdout.write(`${line}\n`),
     report = reportProgress,

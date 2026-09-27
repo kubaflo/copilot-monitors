@@ -2,6 +2,9 @@
 
 Lets the agent watch things in the background and get woken up only when they
 change. It is installed for your user, so it works in every local project.
+Quiet polling uses no model calls; only setup, meaningful events, and optional
+agent follow-ups may use tokens. The benefit grows with the number of idle
+check-ins a watch replaces rather than following a fixed savings percentage.
 
 ## Use it
 
@@ -28,6 +31,9 @@ head, as well as new commits; already-completed checks at startup do not send
 an alert. These use
 `watch.mjs` with `gh` or the Azure DevOps REST API (anonymously, falling back
 to `az login` for private projects). Polling runs locally without invoking AI.
+If GitHub CLI authentication is blocked by organization SSO, branch watches
+fall back to GitHub's anonymous public API. That API has a lower rate limit;
+use a longer check interval (up to 15 minutes) for repositories with many checks.
 One-shot watches poll every minute; branch watches poll every five minutes.
 The canvas shows the latest check, the next scheduled check, an overall
 completion bar, and every CI stage or check with its current state. Pipeline
@@ -80,6 +86,7 @@ to restart. That option cannot be combined with `timeoutMinutes`.
   session's Copilot process stops. Branch watches run until stopped.
 - A monitor that sends more than 10 messages within 5 minutes is stopped, so
   noisy commands cannot burn tokens.
+- Up to 30 monitors can run in one session at once.
 - Commands run with your local permissions in the session's working directory.
   Review agent-written commands before allowing them to run. Pasting a
   supported link in the canvas starts its built-in watcher immediately.

@@ -46,6 +46,7 @@ elements.set("frequency", Object.assign(new Element("select"), {
         { value: "120", textContent: "2 min" },
         { value: "300", textContent: "5 min" },
         { value: "600", textContent: "10 min" },
+        { value: "900", textContent: "15 min" },
     ],
 }));
 const context = {
@@ -97,7 +98,7 @@ test("watch settings show the custom title and current built-in interval", () =>
     const editor = settings.children[1];
     assert.equal(editor.children[0].children[1].value, "Net 11 CI");
     assert.equal(editor.children[1].children[1].value, "300");
-    assert.equal(editor.children[1].children[1].children.length, 5);
+    assert.equal(editor.children[1].children[1].children.length, 6);
     const custom = context.renderCard({ ...monitor, pollIntervalMs: null });
     const rename = watchSettings(custom);
     assert.equal(rename.children[0]["aria-label"], "Rename watch: Net 11 CI");

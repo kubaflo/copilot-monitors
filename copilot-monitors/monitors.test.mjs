@@ -376,7 +376,7 @@ test("invalid input is rejected", async (t) => {
     await assert.rejects(manager.start({ description: "Bad", command: "true", continuous: "true" }), /continuous must be a boolean/);
     await assert.rejects(manager.start({ description: "Bad", command: "true", continuous: true, timeoutMinutes: 240 }), /cannot have a timeoutMinutes/);
     await assert.rejects(manager.start({ description: "Bad", command: "true", progress: "true" }), /progress must be a boolean/);
-    for (const pollIntervalMs of [0, 29_999, 600_001, "30000", 30_000.5]) {
+    for (const pollIntervalMs of [0, 29_999, 900_001, "30000", 30_000.5]) {
         await assert.rejects(manager.start({ description: "Bad", command: "true", pollIntervalMs }), /pollIntervalMs/);
     }
     for (const followUpPrompt of [null, 123, " ".repeat(3), "x".repeat(2_001)]) {

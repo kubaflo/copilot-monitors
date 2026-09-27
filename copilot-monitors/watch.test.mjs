@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { presetFor } from "./presets.mjs";
-import { actionStages, azureStages, branchCheckRuns, branchChecksMessage, branchMessage, buildMessage, checkStages, checksMessage, createFrequencyControl, runMessage, watchBranch } from "./watch.mjs";
+import { actionStages, azureStages, branchCheckRuns, branchChecksMessage, branchMessage, buildMessage, checkStages, checksMessage, createFrequencyControl, githubApi, parseJsonPages, publicGitHubApi, runMessage, watchBranch } from "./watch.mjs";
 
 test("pasted links become built-in watchers", () => {
     const cases = [
@@ -46,7 +46,7 @@ test("each built-in watcher can use a per-watch check frequency without changing
         "https://github.com/dotnet/maui/tree/net11.0",
     ]) {
         const normal = presetFor(url, "darwin");
-        for (const seconds of [30, 60, 120, 300, 600]) {
+        for (const seconds of [30, 60, 120, 300, 600, 900]) {
             const configured = presetFor(url, "darwin", seconds);
             assert.equal(configured.pollIntervalMs, seconds * 1_000);
             assert.equal(configured.command, normal.command);
@@ -80,7 +80,10 @@ test("changing frequency reschedules a pending check without losing the watcher"
     await waiting;
     control.update(30_000);
     assert.deepEqual(updates[1], [30_000, null]);
+    control.update(900_000);
+    assert.deepEqual(updates[2], [900_000, null]);
     assert.throws(() => control.update(29_999), /Polling interval/);
+    assert.throws(() => control.update(900_001), /Polling interval/);
 });
 
 test("other text and unsafe links go to the agent", () => {
@@ -170,6 +173,60 @@ test("branch check runs load every page, not just the first 100 checks", async (
     await assert.rejects(branchCheckRuns("dotnet/maui", head, async () =>
         [{ total_count: 3, check_runs: [{ id: 1 }, { id: 2 }] }], async () => {}),
     (error) => error.transient && /incomplete check runs/.test(error.message));
+});
+
+test("SSO-blocked branch requests fall back only to the public GitHub API", async () => {
+    const endpoint = `repos/microsoft/aspire/commits/${"a".repeat(40)}/check-runs?per_page=100`;
+    const pages = [{ total_count: 1, check_runs: [{ id: 1 }] }];
+    let usedPublic = 0;
+    assert.deepEqual(await githubApi(endpoint, true, async (args) => {
+        assert.deepEqual(args.slice(0, 3), ["api", "--paginate", "--jq"]);
+        assert.match(args[3], /total_count.*check_runs.*app.*@json/);
+        assert.equal(args[4], endpoint);
+        throw new Error("Resource protected by organization SAML enforcement.");
+    }, async (path, paginated) => {
+        assert.equal(path, endpoint);
+        assert.equal(paginated, true);
+        usedPublic++;
+        return pages;
+    }), pages);
+    assert.equal(usedPublic, 1);
+    await assert.rejects(githubApi(endpoint, false, async () => {
+        throw new Error("HTTP 500");
+    }, async () => { usedPublic++; }), /HTTP 500/);
+    assert.equal(usedPublic, 1);
+});
+
+test("compact GitHub check pages preserve every result and reject empty output", () => {
+    const pages = [{ total_count: 2, check_runs: [{ id: 1 }] }, { total_count: 2, check_runs: [{ id: 2 }] }];
+    assert.deepEqual(parseJsonPages(pages.map((page) => JSON.stringify(page)).join("\n") + "\n"), pages);
+    assert.throws(() => parseJsonPages(""), /no check-run pages/);
+    assert.throws(() => parseJsonPages("{}\ninvalid"), /JSON/);
+});
+
+test("public GitHub API fallback paginates only on api.github.com", async () => {
+    const endpoint = `repos/microsoft/aspire/commits/${"a".repeat(40)}/check-runs?per_page=100`;
+    const next = `https://api.github.com/repositories/42/commits/${"a".repeat(40)}/check-runs?per_page=100&page=2`;
+    const calls = [];
+    const fetcher = async (url, options) => {
+        calls.push(url.href);
+        assert.equal(options.redirect, "error");
+        assert.equal(options.headers.Accept, "application/vnd.github+json");
+        return {
+            ok: true,
+            headers: { get: (name) => name === "link" && calls.length === 1 ? `<${next}>; rel="next"` : null },
+            json: async () => ({ total_count: 2, check_runs: [{ id: calls.length }] }),
+        };
+    };
+    const pages = await publicGitHubApi(endpoint, true, fetcher);
+    assert.deepEqual(calls, [`https://api.github.com/${endpoint}`, next]);
+    assert.deepEqual(pages.map((page) => page.check_runs[0].id), [1, 2]);
+    await assert.rejects(publicGitHubApi(endpoint, true, async () => ({
+        ok: true,
+        headers: { get: () => '<https://example.com/checks>; rel="next"' },
+        json: async () => ({ check_runs: [] }),
+    })), /leave api.github.com/);
+    await assert.rejects(publicGitHubApi("https://example.com/", false, fetcher), /only supports/);
 });
 
 test("branch watcher retries a changing initial CI snapshot instead of exiting", async () => {

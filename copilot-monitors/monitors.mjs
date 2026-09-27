@@ -6,7 +6,7 @@ import { FREQUENCY_PREFIX, PROGRESS_PREFIX } from "./progress.mjs";
 
 export class MonitorInputError extends Error {}
 
-const MAX_RUNNING = 20;
+const MAX_RUNNING = 30;
 const MAX_KEPT_LINES = 200;
 const MAX_LINE_CHARS = 1_000;
 const MAX_MESSAGE_LINES = 40;
@@ -276,8 +276,8 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             throw new MonitorInputError("progress must be a boolean.");
         }
         const pollIntervalMs = input?.pollIntervalMs ?? null;
-        if (pollIntervalMs !== null && (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 30_000 || pollIntervalMs > 600_000)) {
-            throw new MonitorInputError("pollIntervalMs must be between 30000 and 600000 milliseconds.");
+        if (pollIntervalMs !== null && (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 30_000 || pollIntervalMs > 900_000)) {
+            throw new MonitorInputError("pollIntervalMs must be between 30000 and 900000 milliseconds.");
         }
         const followUpPrompt = input?.followUpPrompt === undefined ? null : normalizeFollowUpPrompt(input.followUpPrompt);
         const followUpOnOutput = input?.followUpOnOutput ?? false;
