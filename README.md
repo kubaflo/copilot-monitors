@@ -5,10 +5,14 @@ Polling runs locally; the agent wakes only when a meaningful event occurs.
 Live Watches provides a theme-aware canvas, check-by-check progress, and
 optional follow-up instructions.
 
-![Live Watches tracking dotnet/runtime, dotnet/maui, and dotnet/macios](screenshots/live-watches-dark.png)
+![Live Watches and all 22 repositories tracked by the PR Dashboard](screenshots/live-watches-dotnet-ecosystem-dark.png)
 
 <details>
-<summary>Light theme and check details</summary>
+<summary>Light theme, actual canvas, and check details</summary>
+
+![All 22 dashboard repositories alongside Live Watches in light mode](screenshots/live-watches-dotnet-ecosystem-light.png)
+
+![Live Watches tracking dotnet/runtime, dotnet/maui, and dotnet/macios](screenshots/live-watches-dark.png)
 
 ![Live Watches in the light theme](screenshots/live-watches-light.png)
 
@@ -16,8 +20,11 @@ optional follow-up instructions.
 
 </details>
 
-These screenshots show actual public .NET repository checks captured on
-September 27, 2026; their status may have changed since.
+The gallery pairs an actual Live Watches capture with **every one of the 22
+repositories** listed by the [PR Dashboard](https://danmoseley.github.io/pr-dashboard/index.html),
+including `microsoft/aspire`. The repo list shows examples of targets, not
+22 simultaneously running watches. Public CI statuses were captured on
+September 27, 2026 and may have changed since.
 
 ## Install
 
