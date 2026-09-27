@@ -1,0 +1,229 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import vm from "node:vm";
+
+class Element {
+    constructor(tag) {
+        this.tagName = tag.toUpperCase();
+        this.children = [];
+        this.dataset = {};
+        this.classList = {
+            toggle: (name, force) => {
+                const classes = new Set((this.className ?? "").split(" ").filter(Boolean));
+                const enabled = force ?? !classes.has(name);
+                if (enabled) classes.add(name);
+                else classes.delete(name);
+                this.className = [...classes].join(" ");
+                return enabled;
+            },
+        };
+        this.listeners = {};
+    }
+
+    append(...children) { this.children.push(...children); }
+    replaceChildren(...children) { this.children = children; }
+    addEventListener(name, handler) { this.listeners[name] = handler; }
+    setAttribute(name, value) { this[name] = value; }
+    querySelectorAll() { return []; }
+}
+
+const elements = new Map();
+const document = {
+    getElementById(id) {
+        if (!elements.has(id)) elements.set(id, new Element("div"));
+        return elements.get(id);
+    },
+    createElement(tag) { return new Element(tag); },
+    createElementNS(_namespace, tag) { return new Element(tag); },
+    addEventListener() {},
+};
+elements.set("frequency", Object.assign(new Element("select"), {
+    options: [
+        { value: "", textContent: "Auto" },
+        { value: "30", textContent: "30 sec" },
+        { value: "60", textContent: "1 min" },
+        { value: "120", textContent: "2 min" },
+        { value: "300", textContent: "5 min" },
+        { value: "600", textContent: "10 min" },
+    ],
+}));
+const context = {
+    document,
+    location: { href: "http://127.0.0.1/" },
+    URL,
+    fetch: async () => ({ ok: true, json: async () => ({ monitors: [], ask: null }) }),
+    setInterval() {},
+};
+vm.runInNewContext(readFileSync(new URL("./app.js", import.meta.url), "utf8")
+    + "\nglobalThis.renderChecks = checksView; globalThis.renderCard = card; globalThis.refreshWatches = refresh;", context);
+
+function groupRow(checks) {
+    return context.renderChecks(checks, "test-monitor").children[2].children[0];
+}
+
+function watchSettings(card) {
+    return card.children[0].children[1].children.find((child) => child.className === "watch-settings");
+}
+
+function watchBody(card) {
+    return card.children[1];
+}
+
+function watchToggle(card) {
+    return card.children[0].children[1].children.find((child) => child.className === "watch-toggle");
+}
+
+function stage(group, state, name = group) {
+    return { group, name, state, url: `https://github.com/dotnet/maui/actions/runs/${name}` };
+}
+
+test("empty watch list hides its heading and duplicate prompt", async () => {
+    await context.refreshWatches();
+    assert.equal(elements.get("watch-toolbar").hidden, true);
+    assert.equal(elements.get("monitors").children.length, 0);
+});
+
+test("watch settings show the custom title and current built-in interval", () => {
+    const monitor = { id: "abc12345", description: "Branch dotnet/maui net11.0",
+        defaultTitle: "net11.0 · dotnet/maui", title: "Net 11 CI",
+        status: "running", pollIntervalMs: 300_000, output: "", stderr: "" };
+    const card = context.renderCard(monitor);
+    assert.equal(card.children[0].children[0].children[1].textContent, "Net 11 CI");
+    const settings = watchSettings(card);
+    assert.equal(settings.children[0].tagName, "SUMMARY");
+    assert.equal(settings.children[0].children[0].tagName, "SVG");
+    assert.equal(settings.children[0]["aria-label"], "Edit title and frequency: Net 11 CI");
+    const editor = settings.children[1];
+    assert.equal(editor.children[0].children[1].value, "Net 11 CI");
+    assert.equal(editor.children[1].children[1].value, "300");
+    assert.equal(editor.children[1].children[1].children.length, 5);
+    const custom = context.renderCard({ ...monitor, pollIntervalMs: null });
+    const rename = watchSettings(custom);
+    assert.equal(rename.children[0]["aria-label"], "Rename watch: Net 11 CI");
+    assert.equal(rename.children[1].children.length, 2);
+    const defaultCard = context.renderCard({ ...monitor, title: null });
+    assert.equal(defaultCard.children[0].children[0].children[1].textContent, "net11.0 · dotnet/maui");
+    const defaultSettings = watchSettings(defaultCard);
+    assert.equal(defaultSettings.children[1].children[0].children[1].value, "net11.0 · dotnet/maui");
+});
+
+test("editing frequency does not silently rename the watch", async () => {
+    const monitor = { id: "abc12345", description: "Branch dotnet/maui net11.0",
+        defaultTitle: "net11.0 · dotnet/maui", title: null,
+        status: "running", pollIntervalMs: 300_000, output: "", stderr: "" };
+    const settings = watchSettings(context.renderCard(monitor));
+    const editor = settings.children[1];
+    editor.children[1].children[1].value = "120";
+    const originalFetch = context.fetch;
+    let changes;
+    context.fetch = async (url, options) => {
+        if (url.pathname.endsWith("/settings")) changes = JSON.parse(options.body);
+        return { ok: true, json: async () => ({ monitors: [], ask: null }) };
+    };
+    try {
+        await editor.listeners.submit({ preventDefault() {} });
+        assert.deepEqual(changes, { intervalSeconds: 120 });
+    } finally {
+        context.fetch = originalFetch;
+    }
+});
+
+test("watch cards start expanded and collapse independently across rerenders", () => {
+    const monitor = { id: "collapsible-1", description: "Branch dotnet/maui net11.0",
+        defaultTitle: "net11.0 · dotnet/maui", status: "running",
+        pollIntervalMs: 300_000, output: "", stderr: "", stages: [stage("Build", "running")] };
+    const first = context.renderCard(monitor);
+    assert.equal(watchBody(first).hidden, false);
+    assert.equal(watchToggle(first)["aria-expanded"], "true");
+    assert.equal(watchToggle(first)["aria-controls"], "watch-body-collapsible-1");
+    assert.equal(watchToggle(first)["aria-label"], "Collapse net11.0 · dotnet/maui");
+
+    watchToggle(first).listeners.click();
+    assert.equal(watchBody(first).hidden, true);
+    assert.equal(first.className, "monitor-card collapsed");
+    assert.equal(watchToggle(first)["aria-expanded"], "false");
+    assert.equal(watchToggle(first)["aria-label"], "Expand net11.0 · dotnet/maui");
+    assert.equal(watchBody(context.renderCard({ ...monitor, checks: 2 })).hidden, true);
+    assert.equal(watchBody(context.renderCard({ ...monitor, id: "collapsible-2" })).hidden, false);
+
+    const rerendered = context.renderCard(monitor);
+    watchToggle(rerendered).listeners.click();
+    assert.equal(watchBody(rerendered).hidden, false);
+    assert.equal(rerendered.className, "monitor-card");
+    assert.equal(watchBody(context.renderCard(monitor)).hidden, false);
+});
+
+test("watch dot shows watcher health, not the CI result", () => {
+    const monitor = {
+        id: "abc12345", description: "dotnet/macios#26752 checks",
+        status: "running", pollIntervalMs: 60_000, output: "", stderr: "",
+        stages: [stage("API diff", "failed")],
+    };
+    const running = context.renderCard(monitor);
+    assert.equal(running.children[0].children[0].children[0].className, "indicator running");
+    assert.equal(watchBody(running).children.find((child) => child.className === "checks").children[0].children[1].textContent, "1 failed");
+
+    const finished = context.renderCard({ ...monitor, status: "exited", exitCode: 0 });
+    assert.equal(finished.className, "monitor-card no-indicator");
+    assert.equal(finished.children[0].children[0].children.length, 1);
+    assert.equal(watchBody(finished).children.find((child) => child.className === "checks").children[0].children[1].textContent, "1 failed");
+
+    const failed = context.renderCard({ ...monitor, status: "failed", stderr: "Watcher failed" });
+    assert.equal(failed.children[0].children[0].children[0].className, "indicator failed");
+});
+
+test("pipeline counts distinguish passed checks from finished and failed checks", () => {
+    const checks = [
+        ...Array.from({ length: 5 }, (_, index) => stage("maui-pr-devicetests", "passed", `pass-${index}`)),
+        ...Array.from({ length: 4 }, (_, index) => stage("maui-pr-devicetests", "failed", `fail-${index}`)),
+    ];
+    const row = groupRow(checks);
+    assert.equal(row.className, "group-row failed");
+    assert.equal(row.children[1].href, checks[0].url);
+    assert.deepEqual(row.children[2].children.map((item) => item.textContent), ["5 passed", "4 failed"]);
+    assert.ok(!row.children[2].children.some((item) => item.textContent.includes("9/9")));
+});
+
+test("pipeline counts show pending, canceled, warning, and skipped separately", () => {
+    const checks = [
+        stage("mixed", "passed"), stage("mixed", "canceled"),
+        stage("mixed", "warning"), stage("mixed", "skipped"),
+        stage("mixed", "running"), stage("mixed", "queued"),
+    ];
+    const row = groupRow(checks);
+    assert.deepEqual(row.children[2].children.map((item) => item.textContent), [
+        "1 passed", "1 canceled", "1 warning", "1 skipped", "2 pending",
+    ]);
+});
+
+test("CI progress uses proportional result segments without coloring queued checks", () => {
+    const checks = [
+        stage("mixed", "passed"), stage("mixed", "passed"), stage("mixed", "passed"),
+        stage("mixed", "failed"), stage("mixed", "canceled"), stage("mixed", "warning"),
+        stage("mixed", "skipped"), stage("mixed", "skipped"),
+        stage("mixed", "running"), stage("mixed", "queued"),
+    ];
+    const progress = context.renderChecks(checks, "test-monitor").children[1];
+    assert.equal(progress.tagName, "SVG");
+    assert.equal(progress.viewBox, "0 0 10 8");
+    assert.equal(progress.role, "progressbar");
+    assert.equal(progress["aria-valuenow"], "8");
+    assert.equal(progress["aria-valuemax"], "10");
+    assert.equal(progress["aria-label"], "8 of 10 checks finished");
+    assert.deepEqual(progress.children.map(({ class: state, x, width }) => [state, x, width]), [
+        ["segment-passed", "0", "3"],
+        ["segment-failed", "3", "1"],
+        ["segment-canceled", "4", "1"],
+        ["segment-warning", "5", "1"],
+        ["segment-skipped", "6", "2"],
+        ["segment-running", "8", "1"],
+    ]);
+});
+
+test("additional pipeline groups retain their run links", () => {
+    const checks = Array.from({ length: 4 }, (_, index) => stage(`pipeline-${index}`, "passed"));
+    const preview = context.renderChecks(checks, "test-monitor").children[2];
+    assert.equal(preview.children[3].tagName, "DETAILS");
+    assert.equal(preview.children[3].children[1].children[1].href, checks[3].url);
+});
