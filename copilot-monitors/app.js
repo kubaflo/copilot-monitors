@@ -10,7 +10,6 @@ const clear = document.getElementById("clear");
 const toolbar = document.getElementById("watch-toolbar");
 const help = document.getElementById("watch-help");
 const openStages = new Set();
-const openLogs = new Set();
 const openGroups = new Set();
 const openFollowUps = new Set();
 const followUpDrafts = new Map();
@@ -237,7 +236,7 @@ function followUpView(monitor) {
     details.dataset.monitorId = monitor.id;
     details.open = openFollowUps.has(monitor.id);
     details.addEventListener("toggle", () => details.open ? openFollowUps.add(monitor.id) : openFollowUps.delete(monitor.id));
-    details.append(node("summary", "", monitor.followUpPrompt ? "Follow-up set" : "Add follow-up"));
+    details.append(node("summary", "", monitor.followUpPrompt ? "Follow-up prompt" : "Add follow-up prompt"));
 
     const editor = node("form", "edit-follow-up");
     const label = node("label", "", "When this watch fires");
@@ -266,7 +265,7 @@ function followUpView(monitor) {
         try {
             await request(`api/monitors/${monitor.id}/follow-up`, { followUpPrompt: prompt });
             followUpDrafts.delete(monitor.id);
-            show(prompt ? "Follow-up saved. It will run when this watch fires." : "Follow-up removed.");
+            show(prompt ? "Follow-up prompt saved. The agent will respond when this watch fires." : "Follow-up prompt removed.");
             await refresh();
         } catch (error) {
             show(error.message, true);
@@ -460,18 +459,10 @@ function card(monitor) {
     if (stages?.length) body.append(checksView(stages, monitor.id));
     else if (monitor.status === "running") body.append(watchActivity(monitor));
     if (monitor.status === "running") body.append(followUpView(monitor));
-    const output = [monitor.output, monitor.stderr && `stderr:\n${monitor.stderr}`].filter(Boolean).join("\n");
     if (monitor.status === "failed" && monitor.stderr) {
         const error = node("div", "error-summary", monitor.stderr.split("\n").filter(Boolean).at(-1));
         error.title = monitor.stderr;
         body.append(error);
-    }
-    if (output) {
-        const details = node("details", "log-details");
-        details.open = openLogs.has(monitor.id);
-        details.addEventListener("toggle", () => details.open ? openLogs.add(monitor.id) : openLogs.delete(monitor.id));
-        details.append(node("summary", "", "Activity log"), node("pre", "", output));
-        body.append(details);
     }
     return article;
 }

@@ -244,7 +244,7 @@ a:hover { text-decoration: underline; }
     50% { opacity: .3; transform: scale(.7); }
 }
 .status-line { margin: 12px 0 0 22px; color: var(--monitor-muted); font-size: 13px; overflow-wrap: anywhere; }
-.no-indicator :is(.status-line, .checks, .log-details, .error-summary) { margin-left: 0; }
+.no-indicator :is(.status-line, .checks, .error-summary) { margin-left: 0; }
 .watch-activity { margin: 16px 0 0 22px; }
 .watch-activity-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px 12px; color: var(--monitor-muted); font-size: 13px; }
 .watch-activity-head span:first-child { color: var(--monitor-text); }
@@ -380,9 +380,7 @@ a.stage-name { color: var(--monitor-blue); }
 .stage-state.passed::before { content: "✓"; background: var(--monitor-green); }
 .stage-state.failed::before { content: "×"; background: var(--monitor-red); }
 .stage-state.warning::before { content: "!"; background: var(--monitor-yellow); }
-.log-details { margin-left: 22px; }
 .error-summary { margin: 10px 0 0 22px; color: var(--monitor-red); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-pre { max-height: 220px; overflow: auto; margin: 10px 0 0; padding: 12px 14px; border: 1px solid var(--monitor-border); border-radius: 6px; background: var(--monitor-background); font: var(--text-body-small, 12px)/20px var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
 .empty { font-size: 14px; }
 @media (max-width: 560px) {
     #ask { grid-template-columns: repeat(2, minmax(0, 1fr)); }

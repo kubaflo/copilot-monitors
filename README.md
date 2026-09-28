@@ -98,9 +98,10 @@ one-shot condition.
 
 The canvas groups checks by pipeline, shows pending, passed, failed, skipped,
 and canceled results, and lets you rename watches, change the built-in
-polling frequency, or configure a follow-up. Cards start expanded and can be
-collapsed independently; the canvas follows the Copilot app theme. Up to
-30 watches can run in one session. See
+polling frequency, or configure a follow-up prompt. When one runs, chat shows
+the agent's answer instead of a raw watch notification. Cards start expanded
+and can be collapsed independently; the canvas follows the Copilot app theme.
+Up to 30 watches can run in one session. See
 [`copilot-monitors/README.md`](copilot-monitors/README.md) for the complete
 behavior and limits.
 

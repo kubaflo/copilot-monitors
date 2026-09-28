@@ -174,6 +174,22 @@ test("watch dot shows watcher health, not the CI result", () => {
     assert.equal(failed.children[0].children[0].children[0].className, "indicator failed");
 });
 
+test("cards show a follow-up prompt without rendering the raw activity log", () => {
+    const monitor = {
+        id: "abc12345", description: "dotnet/maui#38782 checks",
+        status: "running", pollIntervalMs: 60_000, followUpPrompt: "Tell me if tests are flaky",
+        output: "CI ended: 53 failed", stderr: "", stages: [stage("maui-pr", "failed")],
+    };
+    const running = watchBody(context.renderCard(monitor));
+    const followUp = running.children.find((child) => child.className?.includes("follow-up-settings"));
+    assert.equal(followUp.children[0].textContent, "Follow-up prompt");
+    assert.equal(followUp.children[1].children[1].value, "Tell me if tests are flaky");
+    assert.ok(!running.children.some((child) => child.className === "log-details"));
+    const failed = watchBody(context.renderCard({ ...monitor, status: "failed", stderr: "Watcher crashed" }));
+    assert.equal(failed.children.find((child) => child.className === "error-summary").textContent, "Watcher crashed");
+    assert.ok(!failed.children.some((child) => child.className === "log-details"));
+});
+
 test("pipeline counts distinguish passed checks from finished and failed checks", () => {
     const checks = [
         ...Array.from({ length: 5 }, (_, index) => stage("maui-pr-devicetests", "passed", `pass-${index}`)),

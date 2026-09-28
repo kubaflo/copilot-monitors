@@ -48,6 +48,10 @@ Progress updates do not wake the agent. Built-in link watches run until they
 complete or you stop them, without a deadline.
 Choose a check frequency for new watches or leave it on Auto. You can attach
 a follow-up prompt to run only when the watch finishes or a new commit arrives.
+When a follow-up runs, only the agent's answer is shown in chat; the raw watch
+notification is hidden from the conversation. Watches without a follow-up
+still notify chat with their result. Raw command output is not rendered in the
+canvas, though watcher errors remain visible.
 Built-in watches use a short title with the repository/branch or run number;
 renaming one overrides only its display title, not what it watches.
 Use the settings icon in a watch header to rename it and, for built-in watches,
