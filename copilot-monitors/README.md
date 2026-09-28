@@ -28,7 +28,9 @@ agent to set up a custom watch.
 CI watches send a message to chat when they finish, with the result and failed
 jobs. Branch watches also report completed CI checks attached to their current
 head, as well as new commits; already-completed checks at startup do not send
-an alert. These use
+an alert. Changes to an already-completed check inventory do not repeat that
+alert; a new in-progress CI cycle on the same head can report its completion.
+These use
 `watch.mjs` with `gh` or the Azure DevOps REST API (anonymously, falling back
 to `az login` for private projects). Polling runs locally without invoking AI.
 If GitHub CLI authentication is blocked by organization SSO, branch watches

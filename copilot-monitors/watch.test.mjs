@@ -286,6 +286,55 @@ test("branch watcher shows CI already running on its head and alerts once when i
     assert.deepEqual(lines, [branchChecksMessage("dotnet/maui", "net11.0", head, [completed])]);
 });
 
+test("branch watcher does not repeat completion alerts when finished check inventory changes", async () => {
+    const head = "a".repeat(40);
+    const running = { id: 1, name: "Build", status: "in_progress", conclusion: null };
+    const passed = { ...running, status: "completed", conclusion: "success" };
+    const skipped = { id: 2, name: "Skipped", status: "completed", conclusion: "skipped" };
+    const late = { id: 3, name: "Late", status: "completed", conclusion: "success" };
+    const snapshots = [[running, skipped], [passed, skipped], [passed], [], [passed, late]];
+    const lines = [];
+    const lengths = [];
+    const end = new Error("test complete");
+    end.permanent = true;
+    await assert.rejects(watchBranch("dotnet/maui", "main", {
+        getCommit: async () => {
+            if (!snapshots.length) throw end;
+            return { sha: head };
+        },
+        getChecks: async () => snapshots.shift(),
+        wait: async () => {},
+        emit: (line) => lines.push(line),
+        report: (phase, ms, checks) => {
+            if (phase === "waiting") lengths.push(checks.length);
+        },
+    }), end);
+    assert.deepEqual(lengths, [2, 2, 1, 0, 2]);
+    assert.deepEqual(lines, [branchChecksMessage("dotnet/maui", "main", head, [passed, skipped])]);
+});
+
+test("branch watcher alerts on a same-head rerun after observing active checks", async () => {
+    const head = "a".repeat(40);
+    const passed = { id: 1, name: "Build", status: "completed", conclusion: "success" };
+    const rerun = { id: 2, name: "Build", status: "in_progress", conclusion: null };
+    const completed = { ...rerun, status: "completed", conclusion: "failure" };
+    const snapshots = [[passed], [rerun], [completed], [completed]];
+    const lines = [];
+    const end = new Error("test complete");
+    end.permanent = true;
+    await assert.rejects(watchBranch("dotnet/maui", "main", {
+        getCommit: async () => {
+            if (!snapshots.length) throw end;
+            return { sha: head };
+        },
+        getChecks: async () => snapshots.shift(),
+        wait: async () => {},
+        emit: (line) => lines.push(line),
+        report: () => {},
+    }), end);
+    assert.deepEqual(lines, [branchChecksMessage("dotnet/maui", "main", head, [completed])]);
+});
+
 test("branch watcher does not alert for old CI, but tracks the next head's CI", async () => {
     const first = "a".repeat(40);
     const second = "b".repeat(40);

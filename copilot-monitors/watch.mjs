@@ -322,8 +322,7 @@ export async function watchBranch(repo, branch, {
             report("checking");
         }
     }
-    let completedKey = branchChecksMessage(repo, branch, previous, checks)
-        ? checks.map((check) => `${check.id}:${check.conclusion}`).sort().join("|") : null;
+    let reportedComplete = Boolean(branchChecksMessage(repo, branch, previous, checks));
     report("waiting", getIntervalMs(), branchStages(checks));
     for (let errors = 0; ;) {
         await wait(getIntervalMs());
@@ -341,15 +340,14 @@ export async function watchBranch(repo, branch, {
                 }
                 emit(line);
                 previous = head;
-                completedKey = null;
+                reportedComplete = false;
             }
             const ciMessage = branchChecksMessage(repo, branch, head, checks);
             if (ciMessage) {
-                const key = checks.map((check) => `${check.id}:${check.conclusion}`).sort().join("|");
-                if (key !== completedKey) emit(ciMessage);
-                completedKey = key;
-            } else {
-                completedKey = null;
+                if (!reportedComplete) emit(ciMessage);
+                reportedComplete = true;
+            } else if (checks.some((check) => check.status !== "completed")) {
+                reportedComplete = false;
             }
             errors = 0;
             report("waiting", getIntervalMs(), branchStages(checks));
