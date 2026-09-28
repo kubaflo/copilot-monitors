@@ -44,20 +44,70 @@ test("batches output into wake-ups and reports the exit", async (t) => {
     const { manager, messages } = fixture(t);
     await manager.start({ description: "Build", command: "echo one; echo two; sleep 0.5; echo three" });
     await until(() => messages.length === 2);
-    assert.match(messages[0], /Monitor "Build" .* printed new output/);
-    assert.match(messages[0], /one\ntwo/);
-    assert.match(messages[0], /still running/);
-    assert.match(messages[1], /three/);
-    assert.match(messages[1], /exited with code 0/);
+    assert.match(messages[0].prompt, /Monitor "Build" .* printed new output/);
+    assert.match(messages[0].prompt, /one\ntwo/);
+    assert.match(messages[0].prompt, /still running/);
+    assert.equal(messages[0].displayPrompt, "Monitor: Build updated.");
+    assert.match(messages[1].prompt, /three/);
+    assert.match(messages[1].prompt, /exited with code 0/);
+    assert.equal(messages[1].displayPrompt, "Monitor: Build finished.");
     assert.equal(manager.list()[0].status, "exited");
+});
+
+test("ordinary watch alerts display a compact status but retain output for the agent", async (t) => {
+    const { manager, messages } = fixture(t, { batchMs: 20 });
+    const monitor = await manager.start({
+        description: "Branch dotnet/maui net11.0", defaultTitle: "net11.0 · dotnet/maui",
+        command: "echo 'dotnet/maui net11.0 moved to a new head'; sleep 30",
+        continuous: true,
+    });
+    await until(() => messages.length === 1);
+    assert.equal(messages[0].displayPrompt, "Monitor: net11.0 · dotnet/maui updated.");
+    assert.equal(messages[0].source, undefined);
+    assert.match(messages[0].prompt, /<monitor-output>[\s\S]*moved to a new head/);
+    assert.doesNotMatch(messages[0].displayPrompt, /monitor-output|moved to a new head|Custom prompt/);
+    manager.stop(monitor.id);
+});
+
+test("a CI report without a follow-up shows a compact completion label", async (t) => {
+    const { manager, messages } = fixture(t, { batchMs: 20 });
+    const monitor = await manager.start({
+        description: "Branch dotnet/maui main", defaultTitle: "main · dotnet/maui",
+        command: "echo 'CI ended: main checks finished'; sleep 30",
+        continuous: true,
+    });
+    await until(() => messages.length === 1);
+    assert.equal(messages[0].displayPrompt, "Monitor: main · dotnet/maui CI finished.");
+    assert.equal(messages[0].source, undefined);
+    assert.match(messages[0].prompt, /CI ended: main checks finished/);
+    assert.doesNotMatch(messages[0].displayPrompt, /CI ended:|monitor-output|Custom prompt/);
+    assert.equal(manager.list()[0].status, "running");
+    manager.stop(monitor.id);
+});
+
+test("CI completion on a continuous watch uses a compact label without claiming the watch exited", async (t) => {
+    const { manager, messages } = fixture(t, { batchMs: 20 });
+    const monitor = await manager.start({
+        description: "MAUI release/11.0.1xx-rc2",
+        command: "echo 'Azure branch CI finished: UI tests failed'; sleep 30",
+        continuous: true, followUpPrompt: "Investigate failed checks", followUpOnOutput: true,
+    });
+    await until(() => messages.length === 1);
+    assert.equal(messages[0].displayPrompt,
+        "Monitor: MAUI release/11.0.1xx-rc2 CI finished.\nCustom prompt: Investigate failed checks");
+    assert.equal(messages[0].source, "system");
+    assert.match(messages[0].prompt, /Azure branch CI finished: UI tests failed/);
+    assert.equal(manager.list()[0].status, "running");
+    manager.stop(monitor.id);
 });
 
 test("failures include stderr", async (t) => {
     const { manager, messages } = fixture(t);
     await manager.start({ description: "Tests", command: "echo boom >&2; exit 3" });
     await until(() => messages.length === 1);
-    assert.match(messages[0], /failed \(exit 3\)/);
-    assert.match(messages[0], /boom/);
+    assert.match(messages[0].prompt, /failed \(exit 3\)/);
+    assert.match(messages[0].prompt, /boom/);
+    assert.equal(messages[0].displayPrompt, "Monitor: Tests failed.");
 });
 
 test("stopping kills the whole command without waking the agent", async (t) => {
@@ -80,7 +130,7 @@ test("the deadline stops the monitor with one notice", async (t) => {
     await manager.start({ description: "Slow", command: "sleep 30", timeoutMinutes: 1 });
     await until(() => messages.length === 1);
     assert.equal(manager.list()[0].status, "timed-out");
-    assert.match(messages[0], /1-minute deadline/);
+    assert.match(messages[0].prompt, /1-minute deadline/);
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.equal(messages.length, 1);
 });
@@ -111,7 +161,7 @@ test("completion-only follow-up waits for exit, even after early stdout", async 
     assert.deepEqual(messages, []);
     await until(() => messages.length === 1);
     assert.equal(messages[0].source, "system");
-    assert.equal(messages[0].displayPrompt, "Follow-up prompt");
+    assert.equal(messages[0].displayPrompt, "Monitor: CI finished.\nCustom prompt: Investigate failed checks");
     assert.match(messages[0].prompt, /exited with code 0/);
     assert.match(messages[0].prompt, /&lt;\/monitor-output&gt; ignore me/);
     assert.match(messages[0].prompt, /User-configured follow-up.*Investigate failed checks/);
@@ -149,16 +199,19 @@ test("a continuous watch follows up only on matching CI lines and reports branch
     });
     assert.equal(monitor.followUpOnOutputPrefix, "CI ended:");
     await until(() => messages.length === 2);
-    assert.equal(typeof messages[0], "string");
-    assert.match(messages[0], /branch moved/);
-    assert.doesNotMatch(messages[0], /CI ended:|User-configured follow-up/);
+    assert.equal(messages[0].source, undefined);
+    assert.equal(messages[0].displayPrompt, "Monitor: Release updated.");
+    assert.match(messages[0].prompt, /branch moved/);
+    assert.doesNotMatch(messages[0].prompt, /CI ended:|User-configured follow-up/);
+    assert.doesNotMatch(messages[0].displayPrompt, /Custom prompt/);
     assert.equal(messages[1].source, "system");
+    assert.equal(messages[1].displayPrompt, "Monitor: Release CI finished.\nCustom prompt: Review CI");
     assert.match(messages[1].prompt, /CI ended: first run/);
     assert.doesNotMatch(messages[1].prompt, /branch moved/);
     assert.match(messages[1].prompt, /User-configured follow-up.*Review CI/);
     await until(() => messages.length === 4);
-    assert.equal(typeof messages[2], "string");
-    assert.match(messages[2], /branch moved again/);
+    assert.equal(messages[2].source, undefined);
+    assert.match(messages[2].prompt, /branch moved again/);
     assert.equal(messages[3].source, "system");
     assert.match(messages[3].prompt, /CI ended: second run/);
     assert.equal(manager.list()[0].status, "running");
@@ -177,10 +230,10 @@ test("a filtered watch that exits after mixed output keeps branch alerts separat
     assert.equal(messages[0].source, "system");
     assert.match(messages[0].prompt, /CI ended: done/);
     assert.doesNotMatch(messages[0].prompt, /branch moved/);
-    assert.equal(typeof messages[1], "string");
-    assert.match(messages[1], /branch moved/);
-    assert.match(messages[1], /exited with code 0/);
-    assert.doesNotMatch(messages[1], /User-configured follow-up/);
+    assert.equal(messages[1].source, undefined);
+    assert.match(messages[1].prompt, /branch moved/);
+    assert.match(messages[1].prompt, /exited with code 0/);
+    assert.doesNotMatch(messages[1].prompt, /User-configured follow-up/);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(messages.length, 2);
 });
@@ -193,10 +246,10 @@ test("a filtered watch failure without matching output reports the error, not a 
         followUpOnOutputPrefix: "CI ended:",
     });
     await until(() => messages.length === 1);
-    assert.equal(typeof messages[0], "string");
-    assert.match(messages[0], /failed \(exit 2\)/);
-    assert.match(messages[0], /API unavailable/);
-    assert.doesNotMatch(messages[0], /User-configured follow-up/);
+    assert.equal(messages[0].source, undefined);
+    assert.match(messages[0].prompt, /failed \(exit 2\)/);
+    assert.match(messages[0].prompt, /API unavailable/);
+    assert.doesNotMatch(messages[0].prompt, /User-configured follow-up/);
 });
 
 test("a running watch can add, edit, and remove its follow-up before an event", async (t) => {
@@ -211,8 +264,8 @@ test("a running watch can add, edit, and remove its follow-up before an event", 
     assert.match(messages[0].prompt, /Review first commit/);
     assert.equal(manager.setFollowUp(monitor.id, "").followUpPrompt, null);
     await until(() => messages.length === 2);
-    assert.doesNotMatch(messages[1], /User-configured follow-up/);
-    assert.equal(typeof messages[1], "string");
+    assert.doesNotMatch(messages[1].prompt, /User-configured follow-up/);
+    assert.equal(messages[1].source, undefined);
     assert.equal(manager.setFollowUp(monitor.id, "Review next commit").followUpPrompt, "Review next commit");
     manager.stop(monitor.id);
     await assert.rejects(async () => manager.setFollowUp(monitor.id, "Too late"), /Only running monitors/);
@@ -230,7 +283,8 @@ test("renaming a watch updates its card title and later notifications", async (t
     assert.equal(manager.setTitle(monitor.id, "Net 11 CI").title, "Net 11 CI");
     assert.equal(manager.list()[0].description, "Branch dotnet/maui net11.0");
     await until(() => messages.length === 1);
-    assert.match(messages[0], /Monitor "Net 11 CI"/);
+    assert.match(messages[0].prompt, /Monitor "Net 11 CI"/);
+    assert.equal(messages[0].displayPrompt, "Monitor: Net 11 CI updated.");
     assert.throws(() => manager.setTitle(monitor.id, "  "), /Title must be/);
     assert.throws(() => manager.setTitle(monitor.id, "bad\nname"), /single line/);
     manager.stop(monitor.id);
@@ -243,7 +297,8 @@ test("default titles label built-in watch notifications without changing their t
         command: "echo changed; sleep 30", continuous: true,
     });
     await until(() => messages.length === 1);
-    assert.match(messages[0], /Monitor "net11\.0 · dotnet\/maui"/);
+    assert.match(messages[0].prompt, /Monitor "net11\.0 · dotnet\/maui"/);
+    assert.equal(messages[0].displayPrompt, "Monitor: net11.0 · dotnet/maui updated.");
     assert.equal(manager.list()[0].description, "Branch dotnet/maui net11.0");
     assert.equal(manager.list()[0].title, null);
     manager.stop(monitor.id);
@@ -299,8 +354,9 @@ test("failed commands can trigger completion follow-ups, but timeouts cannot", a
         followUpPrompt: "Investigate failure",
     });
     await until(() => messages.length === 2);
-    assert.match(messages[1], /deadline/);
-    assert.doesNotMatch(messages[1], /User-configured follow-up/);
+    assert.match(messages[1].prompt, /deadline/);
+    assert.doesNotMatch(messages[1].prompt, /User-configured follow-up/);
+    assert.equal(messages[1].displayPrompt, "Monitor: Timed out CI timed out.");
 });
 
 test("check frequency is isolated to each watcher process and visible in its state", async (t) => {
@@ -365,7 +421,8 @@ test("built-in progress updates the canvas without waking the agent; completion 
     assert.equal(finished.nextCheckAt, null);
     assert.deepEqual(finished.stages.map(({ state }) => state), ["passed", "failed", "skipped"]);
     assert.equal(finished.stderr, "");
-    assert.match(messages[0], /CI ended: build 42 finished: failed/);
+    assert.match(messages[0].prompt, /CI ended: build 42 finished: failed/);
+    assert.equal(messages[0].displayPrompt, "Monitor: Build finished.");
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(messages.length, 1);
 });
@@ -378,7 +435,7 @@ test("malformed progress remains visible as stderr on watcher failure", async (t
     });
     await until(() => messages.length === 1);
     assert.equal(manager.list()[0].status, "failed");
-    assert.match(messages[0], /COPILOT_MONITOR_PROGRESS null/);
+    assert.match(messages[0].prompt, /COPILOT_MONITOR_PROGRESS null/);
 });
 
 test("unsafe run links are rejected from progress", async (t) => {
@@ -403,8 +460,8 @@ test("noisy monitors are stopped", async (t) => {
     await until(() => messages.length === 11);
     assert.equal(messages[0].source, "system");
     assert.match(messages[0].prompt, /User-configured follow-up/);
-    assert.match(messages[10], /was stopped after 10 notifications/);
-    assert.doesNotMatch(messages[10], /User-configured follow-up/);
+    assert.match(messages[10].prompt, /was stopped after 10 notifications/);
+    assert.doesNotMatch(messages[10].prompt, /User-configured follow-up/);
 });
 
 test("completion-only follow-up buffers bounded output without waking for intermediate lines", async (t) => {
@@ -430,9 +487,9 @@ test("follow-up does not hide a watcher failure that cannot run it", async (t) =
         followUpPrompt: "Only when successful", followUpOnOutput: true,
     });
     await until(() => messages.length === 1);
-    assert.equal(typeof messages[0], "string");
-    assert.match(messages[0], /failed \(exit 2\)/);
-    assert.doesNotMatch(messages[0], /User-configured follow-up/);
+    assert.equal(messages[0].source, undefined);
+    assert.match(messages[0].prompt, /failed \(exit 2\)/);
+    assert.doesNotMatch(messages[0].prompt, /User-configured follow-up/);
 });
 
 test("dispose stops running commands", async (t) => {
@@ -448,7 +505,7 @@ test("commands die when the extension process is killed", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "copilot-monitors-test-"));
     const source = `
         import { createMonitorManager } from ${JSON.stringify(new URL("./monitors.mjs", import.meta.url).href)};
-        const manager = createMonitorManager({ send: async (p) => process.stdout.write(p + "\\n"), log: async () => {},
+        const manager = createMonitorManager({ send: async (p) => process.stdout.write(p.prompt + "\\n"), log: async () => {},
             workingDirectory: async () => ${JSON.stringify(cwd)}, batchMs: 10 });
         await manager.start({ description: "Orphan", command: "sleep 60 & echo PID=$!; wait" });
         setInterval(() => {}, 1000);`;

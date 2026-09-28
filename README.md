@@ -105,8 +105,9 @@ includes a one-shot verification command and CI-only follow-up settings.
 
 The canvas groups checks by pipeline, shows pending, passed, failed, skipped,
 and canceled results, and lets you rename watches, change the built-in
-polling frequency, or configure a follow-up prompt. When one runs, chat shows
-the agent's answer instead of a raw watch notification. Cards start expanded
+polling frequency, or configure a follow-up prompt. Chat shows a compact
+monitor status and, when a follow-up runs, its custom prompt and the agent's
+answer instead of a raw watch notification. Cards start expanded
 and can be collapsed independently; the canvas follows the Copilot app theme.
 Custom continuous watches can limit follow-ups to matching stdout prefixes
 while reporting other events normally.
