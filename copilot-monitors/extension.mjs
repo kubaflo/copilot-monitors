@@ -335,7 +335,7 @@ const session = await joinSession({
 });
 
 manager = createMonitorManager({
-    send: (prompt) => session.send({ prompt }),
+    send: (notification) => session.send(notification),
     log: (message) => session.log(message, { level: "warning" }),
     workingDirectory: async () => {
         const snapshot = await session.rpc.metadata.snapshot();
