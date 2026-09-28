@@ -174,6 +174,49 @@ test("watch dot shows watcher health, not the CI result", () => {
     assert.equal(failed.children[0].children[0].children[0].className, "indicator failed");
 });
 
+test("continuous watch with completed CI shows an idle dot and keeps polling", () => {
+    const monitor = {
+        id: "a71b7166", description: "MAUI release/11.0.1xx-rc2",
+        status: "running", phase: "waiting", pollIntervalMs: 300_000,
+        nextCheckAt: "2026-09-28T17:15:00Z", output: "", stderr: "",
+        stages: [
+            ...Array.from({ length: 182 }, (_, index) => stage("maui-pr", "passed", `passed-${index}`)),
+            ...Array.from({ length: 5 }, (_, index) => stage("maui-pr-uitests", "failed", `failed-${index}`)),
+            ...Array.from({ length: 3 }, (_, index) => stage("maui-pr-devicetests", "canceled", `canceled-${index}`)),
+        ],
+    };
+    const card = context.renderCard(monitor);
+    assert.equal(card.children[0].children[0].children[0].className, "indicator idle");
+    assert.match(watchBody(card).children.find((child) => child.className === "status-line").textContent,
+        /^Idle · Every 5 min · Checking again ~/);
+    assert.equal(card.children[0].children[1].children.find((child) => child.className === "stop").textContent, "Stop");
+    const checks = watchBody(card).children.find((child) => child.className === "checks");
+    assert.equal(checks.children[0].children[0].textContent, "190/190 complete");
+    assert.equal(checks.children[0].children[1].textContent, "5 failed");
+    assert.equal(context.renderCard({ ...monitor, status: "failed" }).children[0].children[0].children[0].className, "indicator failed");
+});
+
+test("unknown or pending inventory and active checks do not look idle", () => {
+    const monitor = {
+        id: "a71b7166", description: "MAUI release/11.0.1xx-rc2",
+        status: "running", phase: "waiting", pollIntervalMs: 300_000, output: "", stderr: "",
+        stages: [stage("maui-pr", "passed")],
+    };
+    for (const stages of [
+        [], [stage("maui-pr", "queued")], [stage("maui-pr", "running")], [stage("maui-pr", "unknown")],
+    ]) {
+        const card = context.renderCard({ ...monitor, stages });
+        assert.equal(card.children[0].children[0].children[0].className, "indicator running");
+        assert.match(watchBody(card).children.find((child) => child.className === "status-line").textContent, /^Watching/);
+    }
+    for (const [phase, label] of [["checking", "Checking now"], ["retrying", "Retrying"]]) {
+        const card = context.renderCard({ ...monitor, phase });
+        assert.equal(card.children[0].children[0].children[0].className, "indicator running");
+        assert.match(watchBody(card).children.find((child) => child.className === "status-line").textContent,
+            new RegExp(`^${label}`));
+    }
+});
+
 test("cards show a follow-up prompt without rendering the raw activity log", () => {
     const monitor = {
         id: "abc12345", description: "dotnet/maui#38782 checks",

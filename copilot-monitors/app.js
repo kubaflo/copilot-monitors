@@ -92,7 +92,7 @@ function shortName(description) {
 }
 
 function completed(stage) {
-    return !["queued", "running", "unknown"].includes(stage.state);
+    return ["passed", "failed", "canceled", "skipped", "warning"].includes(stage.state);
 }
 
 function watchActivity(monitor) {
@@ -394,13 +394,15 @@ function card(monitor) {
     const collapsed = collapsedWatches.has(monitor.id);
     const article = node("article", `monitor-card${showIndicator ? "" : " no-indicator"}${collapsed ? " collapsed" : ""}`);
     const stages = Array.isArray(monitor.stages) ? monitor.stages : null;
+    const idle = monitor.status === "running" && monitor.phase === "waiting"
+        && Boolean(stages?.length) && stages.every(completed);
     const header = node("div", "monitor-head");
     const title = node("div", "monitor-title");
     const displayName = monitor.title ?? monitor.defaultTitle ?? shortName(monitor.description);
     const name = node("h3", "", displayName);
     name.title = monitor.description;
     if (showIndicator) {
-        const dot = node("span", `indicator ${monitor.status}`);
+        const dot = node("span", `indicator ${idle ? "idle" : monitor.status}`);
         dot.setAttribute("aria-hidden", "true");
         title.append(dot);
     }
@@ -458,10 +460,11 @@ function card(monitor) {
     header.append(actions);
     article.append(header, body);
     const state = monitor.status === "running"
-        ? monitor.phase === "retrying" ? "Retrying" : monitor.phase === "checking" ? "Checking now" : "Watching"
+        ? idle ? "Idle" : monitor.phase === "retrying" ? "Retrying" : monitor.phase === "checking" ? "Checking now" : "Watching"
         : monitor.status === "exited" ? "Finished" : monitor.status;
     const cadence = monitor.pollIntervalMs ? `Every ${frequencyLabel(monitor.pollIntervalMs)}` : null;
-    const next = monitor.status === "running" && monitor.nextCheckAt ? `Next ~${time(monitor.nextCheckAt)}` : null;
+    const next = monitor.status === "running" && monitor.nextCheckAt
+        ? `${idle ? "Checking again" : "Next"} ~${time(monitor.nextCheckAt)}` : null;
     const deadline = monitor.status === "running" && monitor.deadline ? `Deadline ${time(monitor.deadline)}` : null;
     const updates = monitor.notifications ? `${monitor.notifications} alert${monitor.notifications === 1 ? "" : "s"}` : null;
     body.append(node("div", "status-line", [state, cadence, next, deadline, updates].filter(Boolean).join(" · ")));

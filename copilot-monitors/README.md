@@ -42,8 +42,11 @@ completion bar, and every CI stage or check with its current state. Pipeline
 groups distinguish passed, failed, and pending checks. The bar uses semantic
 colors for successful, failed, canceled, warning, skipped, and running checks;
 queued checks remain unfilled.
-The title dot shows an active watch (blue) or a watcher error (red); finished
-watches have no dot. CI failures appear in the check counts instead.
+The title dot is blue while CI is pending, muted gray when every known CI
+check is finished and the continuous watch is idle until its next poll, or red
+for a watcher error. An idle watch still shows its next check time and Stop
+control. Finished watches have no dot. Failed CI checks appear in the check
+counts, not as a watcher error.
 Azure DevOps stages show completed/running job counts; GitHub Actions shows
 each job and its step count; PR links show all checks, grouped by workflow.
 Progress updates do not wake the agent. Built-in link watches run until they
