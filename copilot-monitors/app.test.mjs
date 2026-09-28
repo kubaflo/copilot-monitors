@@ -177,7 +177,7 @@ test("watch dot shows watcher health, not the CI result", () => {
 test("continuous watch with completed CI shows an idle dot and keeps polling", () => {
     const monitor = {
         id: "a71b7166", description: "MAUI release/11.0.1xx-rc2",
-        status: "running", phase: "waiting", pollIntervalMs: 300_000,
+        status: "running", phase: "waiting", pollIntervalMs: null,
         nextCheckAt: "2026-09-28T17:15:00Z", output: "", stderr: "",
         stages: [
             ...Array.from({ length: 182 }, (_, index) => stage("maui-pr", "passed", `passed-${index}`)),
@@ -188,7 +188,7 @@ test("continuous watch with completed CI shows an idle dot and keeps polling", (
     const card = context.renderCard(monitor);
     assert.equal(card.children[0].children[0].children[0].className, "indicator idle");
     assert.match(watchBody(card).children.find((child) => child.className === "status-line").textContent,
-        /^Idle · Every 5 min · Checking again ~/);
+        /^Idle · Checking again ~/);
     assert.equal(card.children[0].children[1].children.find((child) => child.className === "stop").textContent, "Stop");
     const checks = watchBody(card).children.find((child) => child.className === "checks");
     assert.equal(checks.children[0].children[0].textContent, "190/190 complete");
