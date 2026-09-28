@@ -283,7 +283,7 @@ span.group-name { color: var(--monitor-muted); }
 .group-stat + .group-stat::before { padding: 0 6px; color: var(--monitor-muted); content: "·"; }
 .group-stat.passed { color: var(--monitor-green); }
 .group-stat.failed { color: var(--monitor-red); }
-.group-stat.pending { color: var(--monitor-blue); }
+.group-stat.running { color: var(--monitor-blue); }
 .group-stat.warning { color: var(--monitor-yellow); }
 .more-groups { margin: 0; padding: 0; }
 .more-groups > summary { padding: 3px 0; color: var(--monitor-muted); font-size: 13px; }

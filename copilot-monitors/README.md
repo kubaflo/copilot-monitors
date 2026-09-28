@@ -39,7 +39,9 @@ use a longer check interval (up to 15 minutes) for repositories with many checks
 One-shot watches poll every minute; branch watches poll every five minutes.
 The canvas shows the latest check, the next scheduled check, an overall
 completion bar, and every CI stage or check with its current state. Pipeline
-groups distinguish passed, failed, and pending checks. The bar uses semantic
+groups report running, queued, and unknown checks separately from completed
+results; Azure pending-inventory placeholders remain in their own group rather
+than counting as timeline jobs. The bar uses semantic
 colors for successful, failed, canceled, warning, skipped, and running checks;
 queued checks remain unfilled.
 The title dot is blue while CI is pending, muted gray when every known CI

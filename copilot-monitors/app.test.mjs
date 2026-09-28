@@ -312,16 +312,31 @@ test("pipeline counts distinguish passed checks from finished and failed checks"
     assert.ok(!row.children[2].children.some((item) => item.textContent.includes("9/9")));
 });
 
-test("pipeline counts show pending, canceled, warning, and skipped separately", () => {
+test("pipeline counts show running, queued, unknown, canceled, warning, and skipped separately", () => {
     const checks = [
         stage("mixed", "passed"), stage("mixed", "canceled"),
         stage("mixed", "warning"), stage("mixed", "skipped"),
-        stage("mixed", "running"), stage("mixed", "queued"),
+        stage("mixed", "running"), stage("mixed", "queued"), stage("mixed", "unknown"),
     ];
     const row = groupRow(checks);
     assert.deepEqual(row.children[2].children.map((item) => item.textContent), [
-        "1 passed", "1 canceled", "1 warning", "1 skipped", "2 pending",
+        "1 passed", "1 canceled", "1 warning", "1 skipped", "1 running", "1 queued", "1 unknown",
     ]);
+});
+
+test("Azure job group separates three running jobs from five queued jobs and pending inventory", () => {
+    const jobs = [
+        ...Array.from({ length: 3 }, (_, index) => stage("maui-pr - Azure jobs", "running", `running-${index}`)),
+        ...Array.from({ length: 5 }, (_, index) => stage("maui-pr - Azure jobs", "queued", `queued-${index}`)),
+        stage("maui-pr - pending job inventory", "queued", "maui-pr: awaiting jobs"),
+    ];
+    const preview = context.renderChecks(jobs, "net11").children[2];
+    assert.equal(preview.children[0].children[1].textContent, "maui-pr - Azure jobs");
+    assert.equal(preview.children[0].className, "group-row running");
+    assert.deepEqual(preview.children[0].children[2].children.map((item) => item.textContent),
+        ["3 running", "5 queued"]);
+    assert.equal(preview.children[1].children[1].textContent, "maui-pr - pending job inventory");
+    assert.deepEqual(preview.children[1].children[2].children.map((item) => item.textContent), ["1 queued"]);
 });
 
 test("CI progress uses proportional result segments without coloring queued checks", () => {

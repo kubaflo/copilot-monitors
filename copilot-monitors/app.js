@@ -193,14 +193,15 @@ function checksView(stages, monitorId) {
             indicator.setAttribute("aria-hidden", "true");
             const target = checks.find((check) => check.name === name && check.url) ?? checks.find((check) => check.url);
             const stats = node("span", "group-stats");
-            const pending = (counts.queued ?? 0) + (counts.running ?? 0) + (counts.unknown ?? 0);
             for (const [label, count] of [
                 ["passed", counts.passed],
                 ["failed", counts.failed],
                 ["canceled", counts.canceled],
                 ["warning", counts.warning],
                 ["skipped", counts.skipped],
-                ["pending", pending],
+                ["running", counts.running],
+                ["queued", counts.queued],
+                ["unknown", counts.unknown],
             ]) {
                 if (count) stats.append(node("span", `group-stat ${label}`, `${count} ${label}`));
             }
