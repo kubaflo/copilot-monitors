@@ -239,13 +239,13 @@ function followUpView(monitor) {
     details.append(node("summary", "", monitor.followUpPrompt ? "Follow-up prompt" : "Add follow-up prompt"));
 
     const editor = node("form", "edit-follow-up");
-    const label = node("label", "", "When this watch fires");
+    const label = node("label", "visually-hidden", "Follow-up prompt when this watch fires");
     label.htmlFor = `follow-up-${monitor.id}`;
     const textarea = node("textarea");
     textarea.id = label.htmlFor;
     textarea.maxLength = 2_000;
-    textarea.rows = 2;
-    textarea.placeholder = "What should I do?";
+    textarea.rows = 1;
+    textarea.placeholder = "What should the agent do when this watch fires?";
     textarea.value = followUpDrafts.get(monitor.id) ?? monitor.followUpPrompt ?? "";
     textarea.addEventListener("input", () => followUpDrafts.set(monitor.id, textarea.value));
 
@@ -259,23 +259,32 @@ function followUpView(monitor) {
         remove.type = "button";
         actions.append(remove);
     }
+    let saving = false;
     const submit = async (prompt) => {
+        if (saving) return;
+        saving = true;
         save.disabled = true;
         if (remove) remove.disabled = true;
         try {
-            await request(`api/monitors/${monitor.id}/follow-up`, { followUpPrompt: prompt });
+            const { monitor: updated } = await request(`api/monitors/${monitor.id}/follow-up`, { followUpPrompt: prompt });
+            if (updated?.followUpPrompt !== (prompt || null)) {
+                throw new Error("The follow-up prompt was not updated.");
+            }
             followUpDrafts.delete(monitor.id);
+            textarea.value = updated.followUpPrompt ?? "";
             show(prompt ? "Follow-up prompt saved. The agent will respond when this watch fires." : "Follow-up prompt removed.");
             await refresh();
         } catch (error) {
             show(error.message, true);
+        } finally {
+            saving = false;
             save.disabled = false;
             if (remove) remove.disabled = false;
         }
     };
     editor.addEventListener("submit", (event) => {
         event.preventDefault();
-        submit(textarea.value.trim());
+        return submit(textarea.value.trim());
     });
     if (remove) remove.addEventListener("click", () => submit(""));
     editor.append(label, textarea, actions);

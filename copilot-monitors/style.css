@@ -348,13 +348,15 @@ summary:hover { color: var(--monitor-blue); }
 .edit-settings > button { min-height: 36px; padding: 6px 12px; font-size: 13px; }
 .follow-up-settings { margin: 12px 0 0 22px; }
 .follow-up-settings > summary { color: var(--monitor-muted); }
-.follow-up-settings.configured > summary { color: var(--monitor-green); }
-.edit-follow-up { margin: 0 0 4px; }
-.follow-up-actions { display: flex; gap: 8px; margin-top: 8px; }
-.follow-up-actions button { min-height: 34px; padding: 5px 12px; font-size: 13px; }
+.follow-up-settings.configured > summary { color: var(--monitor-blue); }
+.edit-follow-up { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin: 10px 0 4px; }
+.edit-follow-up textarea { flex: 1 1 220px; width: auto; min-width: 0; min-height: 36px; max-height: 140px; padding: 7px 10px; font-size: 13px; line-height: 20px; }
+.follow-up-actions { display: flex; flex: none; gap: 6px; margin-left: auto; }
+.follow-up-actions button { min-height: 36px; padding: 5px 10px; font-size: 13px; }
 .follow-up-actions button[type=submit] { border-color: var(--monitor-button-border); background: var(--monitor-button-background); color: var(--monitor-button-text); }
 .follow-up-actions button[type=submit]:hover:not(:disabled) { background: var(--monitor-button-hover); }
-.follow-up-remove { color: var(--monitor-muted); }
+.follow-up-remove { color: var(--text-color-button-danger-rest, var(--monitor-red)); }
+.follow-up-remove:hover:not(:disabled) { background: var(--background-color-button-danger-hover, var(--monitor-red)); color: var(--text-color-button-danger-hover, #ffffff); }
 .stage-list { max-height: 480px; overflow: auto; margin-top: 12px; border: 1px solid var(--monitor-border); border-radius: 8px; }
 .stage-group { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--monitor-muted); background: var(--monitor-raised); }
 .stage-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--monitor-border); font-size: 14px; }
@@ -393,4 +395,5 @@ a.stage-name { color: var(--monitor-blue); }
     .page-head { flex-wrap: wrap; }
     .monitor-card { padding: 16px; }
     .watch-input > input { padding: 0 36px; font-size: 14px; }
+    .edit-follow-up textarea { flex-basis: 100%; }
 }

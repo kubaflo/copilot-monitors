@@ -190,6 +190,73 @@ test("cards show a follow-up prompt without rendering the raw activity log", () 
     assert.ok(!failed.children.some((child) => child.className === "log-details"));
 });
 
+test("saving an unchanged follow-up leaves Remove usable and removal updates the card", async () => {
+    const monitor = {
+        id: "d0000001", description: "Branch dotnet/maui net11.0", status: "running",
+        pollIntervalMs: 300_000, followUpPrompt: "Tell me when CI ends", output: "", stderr: "",
+    };
+    const originalFetch = context.fetch;
+    const updates = [];
+    context.fetch = async (url, options) => {
+        if (url.pathname.endsWith("/follow-up")) {
+            const { followUpPrompt } = JSON.parse(options.body);
+            updates.push(followUpPrompt);
+            monitor.followUpPrompt = followUpPrompt || null;
+            return { ok: true, json: async () => ({ monitor: { ...monitor } }) };
+        }
+        return { ok: true, json: async () => ({ monitors: [{ ...monitor }], ask: null }) };
+    };
+    try {
+        await context.refreshWatches();
+        const firstCard = elements.get("monitors").children[0];
+        const editor = watchBody(firstCard).children.find((child) => child.className?.includes("follow-up-settings"));
+        editor.open = true;
+        editor.listeners.toggle();
+        const form = editor.children[1];
+        const textarea = form.children[1];
+        const [save, remove] = form.children[2].children;
+        assert.equal(form.children[0].className, "visually-hidden");
+        assert.equal(textarea.rows, 1);
+        assert.equal(textarea.maxLength, 2_000);
+        await form.listeners.submit({ preventDefault() {} });
+        assert.equal(elements.get("monitors").children[0], firstCard);
+        assert.equal(save.disabled, false);
+        assert.equal(remove.disabled, false);
+
+        await remove.listeners.click();
+        assert.deepEqual(updates, ["Tell me when CI ends", ""]);
+        const updated = watchBody(elements.get("monitors").children[0])
+            .children.find((child) => child.className?.includes("follow-up-settings"));
+        assert.equal(updated.open, true);
+        assert.equal(updated.children[0].textContent, "Add follow-up prompt");
+        assert.equal(updated.children[1].children[1].value, "");
+        assert.equal(updated.children[1].children[2].children.length, 1);
+    } finally {
+        context.fetch = originalFetch;
+    }
+});
+
+test("a failed follow-up removal keeps Remove usable and shows the error", async () => {
+    const monitor = {
+        id: "d0000002", description: "Branch dotnet/maui net11.0", status: "running",
+        pollIntervalMs: 300_000, followUpPrompt: "Tell me when CI ends", output: "", stderr: "",
+    };
+    const originalFetch = context.fetch;
+    context.fetch = async () => ({ ok: false, status: 503, json: async () => ({ error: "Watch is temporarily unavailable" }) });
+    try {
+        const editor = watchBody(context.renderCard(monitor))
+            .children.find((child) => child.className?.includes("follow-up-settings"));
+        const [save, remove] = editor.children[1].children[2].children;
+        await remove.listeners.click();
+        assert.equal(save.disabled, false);
+        assert.equal(remove.disabled, false);
+        assert.equal(elements.get("status").className, "failure");
+        assert.equal(elements.get("status").children[0].textContent, "Watch is temporarily unavailable");
+    } finally {
+        context.fetch = originalFetch;
+    }
+});
+
 test("pipeline counts distinguish passed checks from finished and failed checks", () => {
     const checks = [
         ...Array.from({ length: 5 }, (_, index) => stage("maui-pr-devicetests", "passed", `pass-${index}`)),
