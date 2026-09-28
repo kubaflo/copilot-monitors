@@ -16,6 +16,7 @@ const START_DESCRIPTION = [
     "Live Watches starts these pasted links without an agent turn: https://github.com/owner/repo/pull/123 (or #123 for this repo), https://github.com/owner/repo/actions/runs/123, https://github.com/owner/repo/tree/main (single-segment branch), and https://dev.azure.com/org/project/_build/results?buildId=123 (also org.visualstudio.com). Other URLs and descriptions need an agent-written monitor.",
     "Print only meaningful changes: monitors sending more than 10 messages in 5 minutes are stopped. Use `grep --line-buffered` in pipes.",
     "Runs in the session's working directory with a deadline (default 30 minutes, max 240); at the deadline it stops and you get one notice. For ongoing conditions such as new commits, set continuous: true instead of timeoutMinutes so it runs until stopped or this session ends, without periodic AI wake-ups.",
+    "Pass url for a custom watch with a known HTTPS branch, PR, or build page so its title opens that destination.",
     "Examples: `gh run watch 123 --exit-status >/dev/null 2>&1; echo \"run 123 finished: exit $?\"`;",
     "`prev=; while :; do s=$(gh pr checks 42 --json bucket --jq '[.[].bucket]|unique|join(\",\")'); [ \"$s\" != \"$prev\" ] && echo \"checks: $s\" && prev=$s; case $s in *pending*) sleep 60;; *) exit 0;; esac; done`;",
     "`tail -F build.log | grep --line-buffered -E 'error|FAILED'`.",
@@ -269,6 +270,7 @@ const session = await joinSession({
                 properties: {
                     description: { type: "string", description: "Short label shown to the user, e.g. \"CI on PR #42\"." },
                     command: { type: "string", description: "Shell command to run in the background." },
+                    url: { type: "string", maxLength: 2_048, description: "Optional HTTPS destination opened by clicking the watch title." },
                     timeoutMinutes: { type: "integer", minimum: 1, maximum: 240, description: "Deadline in minutes (default 30)." },
                     continuous: { type: "boolean", description: "For ongoing watches, run until stopped or the session ends, with no periodic timeout wake-up. Do not set timeoutMinutes." },
                     progress: { type: "boolean", description: "Show local check activity from the built-in watch.mjs script in the canvas without waking the agent." },

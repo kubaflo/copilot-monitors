@@ -223,6 +223,9 @@ a:hover { text-decoration: underline; }
 .monitor-card.collapsed .monitor-head { border-bottom: 0; border-radius: 7px; }
 .monitor-actions { gap: 8px; }
 .monitor-title { min-width: 0; gap: 12px; }
+.watch-title-link { color: inherit; text-decoration: none; }
+.watch-title-link:hover { color: var(--monitor-blue); text-decoration: underline; }
+.watch-title-link:focus-visible { outline: 2px solid var(--monitor-focus); outline-offset: 2px; border-radius: 2px; }
 .monitor-actions { flex: none; }
 .monitor-actions .link { color: var(--monitor-blue); font-size: 14px; font-weight: 550; }
 .watch-toggle { display: grid; place-items: center; width: 30px; min-height: 34px; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--monitor-muted); }

@@ -63,6 +63,10 @@ Raw command output is not rendered in the canvas, though watcher errors remain
 visible.
 Built-in watches use a short title with the repository/branch or run number;
 renaming one overrides only its display title, not what it watches.
+Watch titles link to the watch's configured HTTPS destination (set `url` with
+`copilot_monitor_start` for custom watches), then the first available check or
+job link. Without any external destination, clicking the title toggles that
+watch's details instead of opening an unrelated page.
 Use the settings icon in a watch header to rename it and, for built-in watches,
 change its interval without restarting the watch or losing its CI progress.
 Each watch starts expanded. Use the header chevron to collapse or expand its

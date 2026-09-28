@@ -75,6 +75,10 @@ function watchToggle(card) {
     return card.children[0].children[1].children.find((child) => child.className === "watch-toggle");
 }
 
+function watchTitle(card) {
+    return card.children[0].children[0].children.at(-1).children[0];
+}
+
 function stage(group, state, name = group) {
     return { group, name, state, url: `https://github.com/dotnet/maui/actions/runs/${name}` };
 }
@@ -90,7 +94,7 @@ test("watch settings show the custom title and current built-in interval", () =>
         defaultTitle: "net11.0 · dotnet/maui", title: "Net 11 CI",
         status: "running", pollIntervalMs: 300_000, output: "", stderr: "" };
     const card = context.renderCard(monitor);
-    assert.equal(card.children[0].children[0].children[1].textContent, "Net 11 CI");
+    assert.equal(watchTitle(card).textContent, "Net 11 CI");
     const settings = watchSettings(card);
     assert.equal(settings.children[0].tagName, "SUMMARY");
     assert.equal(settings.children[0].children[0].tagName, "SVG");
@@ -104,9 +108,42 @@ test("watch settings show the custom title and current built-in interval", () =>
     assert.equal(rename.children[0]["aria-label"], "Rename watch: Net 11 CI");
     assert.equal(rename.children[1].children.length, 2);
     const defaultCard = context.renderCard({ ...monitor, title: null });
-    assert.equal(defaultCard.children[0].children[0].children[1].textContent, "net11.0 · dotnet/maui");
+    assert.equal(watchTitle(defaultCard).textContent, "net11.0 · dotnet/maui");
     const defaultSettings = watchSettings(defaultCard);
     assert.equal(defaultSettings.children[1].children[0].children[1].value, "net11.0 · dotnet/maui");
+});
+
+test("watch titles link to the watch URL, then a check URL, then their own details", () => {
+    const monitor = {
+        id: "abc12345", description: "MAUI net11.0", title: "MAUI net11.0",
+        status: "running", pollIntervalMs: null, output: "", stderr: "",
+        stages: [stage("maui-pr - Azure jobs", "running", "job-42")],
+    };
+    const branchUrl = "https://github.com/dotnet/maui/tree/net11.0";
+    const configured = context.renderCard({ ...monitor, url: branchUrl });
+    const configuredTitle = watchTitle(configured);
+    assert.equal(configuredTitle.tagName, "A");
+    assert.equal(configuredTitle.textContent, "MAUI net11.0");
+    assert.equal(configuredTitle.href, branchUrl);
+    assert.equal(configuredTitle.target, "_blank");
+    assert.equal(configuredTitle.rel, "noopener noreferrer");
+
+    const checkTitle = watchTitle(context.renderCard(monitor));
+    assert.equal(checkTitle.href, monitor.stages[0].url);
+    assert.equal(checkTitle.target, "_blank");
+
+    const withoutUrl = context.renderCard({ ...monitor, stages: [] });
+    const detailsLink = watchTitle(withoutUrl);
+    assert.equal(detailsLink.tagName, "A");
+    assert.equal(detailsLink.href, "#watch-body-abc12345");
+    assert.equal(detailsLink.target, "_self");
+    let prevented = false;
+    detailsLink.listeners.click({ preventDefault() { prevented = true; } });
+    assert.equal(prevented, true);
+    assert.equal(watchBody(withoutUrl).hidden, true);
+    assert.equal(watchToggle(withoutUrl)["aria-expanded"], "false");
+    detailsLink.listeners.click({ preventDefault() {} });
+    assert.equal(watchBody(withoutUrl).hidden, false);
 });
 
 test("editing frequency does not silently rename the watch", async () => {

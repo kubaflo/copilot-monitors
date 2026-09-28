@@ -400,8 +400,15 @@ function card(monitor) {
     const header = node("div", "monitor-head");
     const title = node("div", "monitor-title");
     const displayName = monitor.title ?? monitor.defaultTitle ?? shortName(monitor.description);
-    const name = node("h3", "", displayName);
-    name.title = monitor.description;
+    const destination = monitor.url ?? stages?.find((stage) => stage.url)?.url;
+    const name = node("h3");
+    const nameLink = link(displayName, destination ?? `#watch-body-${monitor.id}`, "watch-title-link");
+    if (!destination) {
+        nameLink.target = "_self";
+        nameLink.rel = "";
+    }
+    name.append(nameLink);
+    name.title = displayName;
     if (showIndicator) {
         const dot = node("span", `indicator ${idle ? "idle" : monitor.status}`);
         dot.setAttribute("aria-hidden", "true");
@@ -456,6 +463,10 @@ function card(monitor) {
         else collapsedWatches.delete(monitor.id);
     };
     toggle.addEventListener("click", () => setCollapsed(!body.hidden));
+    if (!destination) nameLink.addEventListener("click", (event) => {
+        event.preventDefault();
+        setCollapsed(!body.hidden);
+    });
     setCollapsed(collapsed);
     actions.append(toggle);
     header.append(actions);
