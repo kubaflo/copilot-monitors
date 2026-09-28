@@ -1,7 +1,7 @@
 // Built-in watchers for links pasted into the Monitors canvas.
-// Usage: node watch.mjs azdo <org> <project> <buildId> | pr <owner/repo|.> <number>
+// Usage: node watch.mjs azdo <org> <project> <buildId> | pr <owner/repo|.> <number> [--pipeline <name>]
 //        | run <owner/repo> <runId> | branch <owner/repo> <branch>
-// One-shot watches print once on completion; branch watches print on head changes and CI completion.
+// Run/build watches print once; PR/branch watches print on each new CI cycle.
 import { execFile } from "node:child_process";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
@@ -358,6 +358,94 @@ export async function watchBranch(repo, branch, {
     }
 }
 
+export async function watchPullRequest(repo, number, {
+    getPullRequest = () => gh(["pr", "view", number, ...(repo === "." ? [] : ["-R", repo]), "--json", "headRefOid,state,url"]),
+    getChecks = async () => {
+        try {
+            return await gh(["pr", "checks", number, ...(repo === "." ? [] : ["-R", repo]),
+                "--json", "name,bucket,state,workflow,link"]);
+        } catch (error) {
+            if (/no checks reported/i.test(error.message)) return [];
+            throw error;
+        }
+    },
+    wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    emit = (line) => process.stdout.write(`${line}\n`),
+    report = reportProgress,
+    getIntervalMs = () => POLL_MS,
+    pipeline = null,
+} = {}) {
+    if (repo !== "." && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+        throw new Error("PR watcher requires an owner/repository or '.' for the current repository.");
+    }
+    if (!/^\d{1,12}$/.test(String(number))) throw new Error("PR watcher requires a pull request number.");
+    if (pipeline !== null && (typeof pipeline !== "string" || !pipeline.trim()
+        || pipeline.length > 100 || /[\r\n]/.test(pipeline))) {
+        throw new Error("Pipeline must be a nonempty single-line name of at most 100 characters.");
+    }
+    const label = repo === "." ? `PR #${number}` : `${repo}#${number}`;
+    const validate = (pr) => {
+        if (!/^[0-9a-f]{40}$/.test(pr?.headRefOid ?? "")
+            || !["OPEN", "CLOSED", "MERGED"].includes(pr.state)) {
+            throw new Error(`GitHub returned an invalid PR state or head for ${label}.`);
+        }
+        let target;
+        try {
+            target = new URL(pr.url);
+        } catch {
+            throw new Error(`GitHub returned an invalid PR URL for ${label}.`);
+        }
+        if (target.protocol !== "https:" || target.username || target.password) {
+            throw new Error(`GitHub returned an invalid PR URL for ${label}.`);
+        }
+        return target.href;
+    };
+    let head;
+    let reportedComplete = false;
+    for (let errors = 0; ;) {
+        report("checking");
+        try {
+            const before = await getPullRequest();
+            const beforeUrl = validate(before);
+            if (before.state !== "OPEN") {
+                report("complete");
+                return `${label} ${before.state.toLowerCase()}; watch ended. ${beforeUrl}`;
+            }
+            const checks = await getChecks();
+            const current = await getPullRequest();
+            const target = validate(current);
+            if (before?.headRefOid !== current.headRefOid) {
+                throw new Error(`PR head changed while reading checks for ${label}; retrying.`);
+            }
+            if (current.state !== "OPEN") {
+                report("complete", undefined, checkStages(checks));
+                return `${label} ${current.state.toLowerCase()}; watch ended. ${target}`;
+            }
+            if (head && head !== current.headRefOid) {
+                emit(`${label} head moved ${head.slice(0, 10)} -> ${current.headRefOid.slice(0, 10)}. ${target}`);
+                reportedComplete = false;
+            }
+            head = current.headRefOid;
+            const selected = pipeline === null ? checks : checks.filter((check) =>
+                check.workflow === pipeline || check.name === pipeline
+                || check.name.startsWith(`${pipeline} (`) || check.name.startsWith(`${pipeline} /`));
+            const message = checksMessage(`${pipeline === null ? "" : `${pipeline} | `}${label} (${head.slice(0, 10)})`, selected);
+            if (message) {
+                if (!reportedComplete) emit(message);
+                reportedComplete = true;
+            } else if (selected.some((check) => check.bucket === "pending")) {
+                reportedComplete = false;
+            }
+            errors = 0;
+            report("waiting", getIntervalMs(), checkStages(checks));
+        } catch (error) {
+            if (error.permanent || ++errors >= MAX_ERRORS) throw error;
+            report("retrying", getIntervalMs());
+        }
+        await wait(getIntervalMs());
+    }
+}
+
 let token;
 async function azdoToken() {
     if (!token || Date.now() - token.at > TOKEN_MAX_AGE_MS) {
@@ -429,16 +517,13 @@ export async function watch([kind, ...args], control) {
         }, control);
     }
     if (kind === "pr") {
-        const [repo, number] = args;
-        const scope = repo === "." ? [] : ["-R", repo];
-        const label = repo === "." ? `PR #${number}` : `${repo}#${number}`;
-        return poll(async () => {
-            const checks = await gh(["pr", "checks", number, ...scope, "--json", "name,bucket,state,workflow,link"]).catch((error) => {
-                // Checks can take a few minutes to appear after a push.
-                if (/no checks reported/i.test(error.message)) return [];
-                throw error;
-            }, control);
-            return { message: checksMessage(label, checks), stages: checkStages(checks) };
+        const [repo, number, ...options] = args;
+        if (options.length && (options.length !== 2 || options[0] !== "--pipeline")) {
+            throw new Error("Usage: watch.mjs pr <owner/repo|.> <number> [--pipeline <name>]");
+        }
+        return watchPullRequest(repo, number, {
+            ...(control && { wait: () => control.wait(), getIntervalMs: () => control.intervalMs }),
+            pipeline: options.length ? options[1] : null,
         });
     }
     if (kind === "run") {

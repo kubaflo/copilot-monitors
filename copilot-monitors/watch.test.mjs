@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { presetFor } from "./presets.mjs";
-import { actionStages, azureStages, branchCheckRuns, branchChecksMessage, branchMessage, buildMessage, checkStages, checksMessage, createFrequencyControl, githubApi, parseJsonPages, publicGitHubApi, runMessage, watchBranch } from "./watch.mjs";
+import { actionStages, azureStages, branchCheckRuns, branchChecksMessage, branchMessage, buildMessage, checkStages, checksMessage, createFrequencyControl, githubApi, parseJsonPages, publicGitHubApi, runMessage, watchBranch, watchPullRequest } from "./watch.mjs";
 
 test("pasted links become built-in watchers", () => {
     const cases = [
@@ -19,7 +19,8 @@ test("pasted links become built-in watchers", () => {
         assert.match(preset.command, new RegExp(`^node \\S+/watch\\.mjs ${args}$`));
         assert.equal(preset.continuous, true);
         assert.equal(preset.progress, true);
-        assert.equal(preset.followUpOnOutput, false);
+        assert.equal(preset.followUpOnOutput, args.startsWith("pr "));
+        assert.equal(preset.followUpOnOutputPrefix, args.startsWith("pr ") ? "CI ended:" : undefined);
         assert.equal(preset.timeoutMinutes, undefined);
         assert.equal(preset.pollIntervalMs, 60_000);
     }
@@ -333,6 +334,90 @@ test("branch watcher alerts on a same-head rerun after observing active checks",
         report: () => {},
     }), end);
     assert.deepEqual(lines, [branchChecksMessage("dotnet/maui", "main", head, [completed])]);
+});
+
+test("PR watcher follows successive pushes and a selected pipeline without waiting for other checks", async () => {
+    const first = "a".repeat(40);
+    const second = "b".repeat(40);
+    const third = "c".repeat(40);
+    const check = (name, bucket, id) => ({
+        name, bucket, state: bucket === "pending" ? "IN_PROGRESS" : "COMPLETED",
+        workflow: "", link: `https://example.com/check/${id}`,
+    });
+    const snapshots = [
+        { sha: first, checks: [check("maui-pr", "fail", 1), check("maui-pr-uitests", "pending", 2)] },
+        { sha: first, checks: [check("maui-pr", "fail", 1), check("maui-pr-uitests", "pending", 2)] },
+        { sha: second, checks: [check("maui-pr", "pending", 3), check("maui-pr-uitests", "pending", 4)] },
+        { sha: second, checks: [check("maui-pr", "pass", 3), check("maui-pr-uitests", "pending", 4)] },
+        { sha: second, checks: [check("maui-pr", "pass", 3), check("maui-pr-uitests", "pass", 4)] },
+        { sha: third, checks: [check("maui-pr", "pending", 5), check("maui-pr-uitests", "pending", 6)] },
+        { sha: third, checks: [check("maui-pr", "fail", 5), check("maui-pr-uitests", "pending", 6)] },
+        { sha: third, checks: [check("maui-pr", "pending", 7), check("maui-pr-uitests", "pending", 6)] },
+        { sha: third, checks: [check("maui-pr", "pass", 7), check("maui-pr-uitests", "pending", 6)] },
+        { sha: third, checks: [check("maui-pr", "pass", 7), check("maui-pr-uitests", "pass", 6)], state: "MERGED" },
+    ];
+    let index = 0;
+    const lines = [];
+    const phases = [];
+    const url = "https://github.com/dotnet/maui/pull/42";
+    const result = await watchPullRequest("dotnet/maui", "42", {
+        pipeline: "maui-pr",
+        getPullRequest: async () => ({
+            headRefOid: snapshots[index].sha, state: snapshots[index].state ?? "OPEN", url,
+        }),
+        getChecks: async () => {
+            assert.notEqual(snapshots[index].state, "MERGED");
+            return snapshots[index].checks;
+        },
+        wait: async () => { index++; },
+        emit: (line) => lines.push(line),
+        report: (phase) => phases.push(phase),
+    });
+    assert.match(result, /dotnet\/maui#42 merged; watch ended/);
+    assert.equal(index, snapshots.length - 1);
+    assert.deepEqual(lines.map((line) => line.startsWith("CI ended:") ? "CI" : "HEAD"),
+        ["CI", "HEAD", "CI", "HEAD", "CI", "CI"]);
+    assert.ok(lines.filter((line) => line.startsWith("CI ended:"))
+        .every((line) => line.startsWith("CI ended: maui-pr | dotnet/maui#42")));
+    assert.match(lines[0], /1 failed or canceled/);
+    assert.match(lines[2], /1 passed/);
+    assert.match(lines[4], /1 failed or canceled/);
+    assert.match(lines[5], /1 passed/);
+    assert.equal(phases.at(-1), "complete");
+});
+
+test("default PR watch waits for all checks and re-arms after a new push", async () => {
+    const first = "a".repeat(40);
+    const second = "b".repeat(40);
+    const checks = (core, ui) => [
+        { name: "maui-pr", bucket: core, state: core === "pending" ? "IN_PROGRESS" : "COMPLETED", workflow: "", link: "https://example.com/core" },
+        { name: "maui-pr-uitests", bucket: ui, state: ui === "pending" ? "IN_PROGRESS" : "COMPLETED", workflow: "", link: "https://example.com/ui" },
+    ];
+    const snapshots = [
+        { sha: first, checks: checks("pending", "pending") },
+        { sha: first, checks: checks("pass", "pending") },
+        { sha: first, checks: checks("pass", "fail") },
+        { sha: first, checks: checks("pass", "fail") },
+        { sha: second, checks: checks("pending", "pending") },
+        { sha: second, checks: checks("pass", "pending") },
+        { sha: second, checks: checks("pass", "pass") },
+    ];
+    let index = 0;
+    const lines = [];
+    const end = new Error("test complete");
+    await assert.rejects(watchPullRequest("dotnet/maui", "42", {
+        getPullRequest: async () => ({
+            headRefOid: snapshots[index].sha, state: "OPEN", url: "https://github.com/dotnet/maui/pull/42",
+        }),
+        getChecks: async () => snapshots[index].checks,
+        wait: async () => { if (index === snapshots.length - 1) throw end; index++; },
+        emit: (line) => lines.push(line),
+        report: () => {},
+    }), end);
+    assert.equal(lines.filter((line) => line.startsWith("CI ended:")).length, 2);
+    assert.equal(lines.filter((line) => line.includes("head moved")).length, 1);
+    assert.match(lines[0], /1 failed or canceled/);
+    assert.match(lines[2], /2 passed, 0 failed or canceled/);
 });
 
 test("branch watcher does not alert for old CI, but tracks the next head's CI", async () => {

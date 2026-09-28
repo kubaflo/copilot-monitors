@@ -9,7 +9,8 @@ const pipelines = new Map([
     [313, "maui-pr-uitests"],
     [314, "maui-pr-devicetests"],
 ]);
-const allowedBranches = new Set(["inflight/current", "release/11.0.1xx-rc2"]);
+const pipelineNames = new Set(pipelines.values());
+const allowedBranches = new Set(["main", "net11.0", "release/11.0.1xx-rc2", "inflight/current", "inflight/candidate"]);
 
 export function selectBuilds(builds, branch, sha) {
     return [...pipelines].map(([definitionId, name]) => {
@@ -149,47 +150,81 @@ export async function snapshot(branch) {
     };
 }
 
-async function watch(branch) {
+export async function watch(branch, {
+    notifyPipelines = [],
+    readSnapshot = snapshot,
+    wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    emit = (line) => console.log(line),
+    report = reportProgress,
+} = {}) {
+    if (!allowedBranches.has(branch) || !Array.isArray(notifyPipelines)
+        || notifyPipelines.some((name) => !pipelineNames.has(name))
+        || new Set(notifyPipelines).size !== notifyPipelines.length) {
+        throw new Error("Specify a supported branch and unique MAUI pipeline names.");
+    }
     let previous;
     let completedKey;
+    const completedPipelines = new Map();
     let lastError;
     let errors = 0;
     for (;;) {
-        reportProgress("checking");
+        report("checking");
         try {
-            const current = await snapshot(branch);
-            if (lastError) console.log(`Watching ${repo} ${branch}: branch CI access recovered.`);
+            const current = await readSnapshot(branch);
+            if (lastError) emit(`Watching ${repo} ${branch}: branch CI access recovered.`);
             if (previous && current.sha !== previous) {
-                console.log(`${repo} ${branch} moved ${previous.slice(0, 10)} -> ${current.sha.slice(0, 10)}. https://github.com/${repo}/tree/${branch}`);
+                emit(`${repo} ${branch} moved ${previous.slice(0, 10)} -> ${current.sha.slice(0, 10)}. https://github.com/${repo}/tree/${branch}`);
                 completedKey = null;
+                completedPipelines.clear();
             }
-            if (previous && current.complete && current.key !== completedKey) {
+            if (notifyPipelines.length) {
+                for (const name of notifyPipelines) {
+                    const build = current.builds.find((candidate) => candidate.name === name);
+                    const key = build?.id && ["passed", "failed", "canceled", "warning"].includes(build.state)
+                        ? `${current.sha}:${build.id}:${build.state}` : null;
+                    if (previous && key && key !== completedPipelines.get(name)) {
+                        emit(`Azure branch CI finished: ${name} | ${repo} ${branch} (${current.sha.slice(0, 10)}): ${build.state}. ${build.url}`);
+                    }
+                    if (key) completedPipelines.set(name, key);
+                    else if (build?.id) completedPipelines.delete(name);
+                }
+            } else if (previous && current.complete && current.key !== completedKey) {
                 const results = current.builds.map((build) => `${build.name}: ${build.state} (${build.url})`);
-                console.log(`Azure branch CI finished: ${repo} ${branch} (${current.sha.slice(0, 10)}). ${results.join("; ")}. PR builds are excluded.`);
+                emit(`Azure branch CI finished: ${repo} ${branch} (${current.sha.slice(0, 10)}). ${results.join("; ")}. PR builds are excluded.`);
             }
             previous = current.sha;
             completedKey = current.complete ? current.key : null;
             errors = 0;
             lastError = null;
-            reportProgress("waiting", intervalMs, current.stages);
+            report("waiting", intervalMs, current.stages);
         } catch (error) {
-            if (error.message !== lastError) console.log(`Branch watch error for ${repo} ${branch}: ${error.message}`);
+            if (error.message !== lastError) emit(`Branch watch error for ${repo} ${branch}: ${error.message}`);
             lastError = error.message;
             if (++errors >= 5) throw error;
-            reportProgress("retrying", intervalMs);
+            report("retrying", intervalMs);
         }
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        await wait(intervalMs);
     }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    const [branch, mode, ...rest] = process.argv.slice(2);
-    if (!allowedBranches.has(branch) || (mode !== undefined && mode !== "--once") || rest.length) {
-        throw new Error("Usage: node watch-maui-branch-ci.mjs <inflight/current|release/11.0.1xx-rc2> [--once]");
+    const [branch, ...options] = process.argv.slice(2);
+    const notifyPipelines = [];
+    let once = false;
+    for (let index = 0; index < options.length; index++) {
+        if (options[index] === "--once" && !once) once = true;
+        else if (options[index] === "--notify-pipeline" && pipelineNames.has(options[index + 1])) {
+            notifyPipelines.push(options[++index]);
+        } else {
+            throw new Error("Usage: node watch-maui-branch-ci.mjs <main|net11.0|release/11.0.1xx-rc2|inflight/current|inflight/candidate> [--notify-pipeline <name>]... [--once]");
+        }
     }
-    if (mode === "--once") {
+    if (!allowedBranches.has(branch) || new Set(notifyPipelines).size !== notifyPipelines.length) {
+        throw new Error("Specify a supported branch and unique MAUI pipeline names.");
+    }
+    if (once) {
         console.log(JSON.stringify(await snapshot(branch), null, 2));
     } else {
-        await watch(branch);
+        await watch(branch, { notifyPipelines });
     }
 }

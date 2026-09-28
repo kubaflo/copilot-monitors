@@ -57,7 +57,8 @@ September 27, 2026 and may have changed since.
 2. Open **Live Watches** and paste a supported link. The watch starts
    immediately, without an agent turn.
 3. Keep working, or leave the agent idle. Inspect progress in the canvas;
-   optionally set a follow-up for when the result arrives.
+   optionally set a follow-up for each completed PR CI cycle. PR watches stay
+   active across pushes until the PR closes or merges.
 
 Alternatively, on macOS or Linux, install from a fresh clone:
 
@@ -93,15 +94,18 @@ Paste a link in the canvas for a ready-made watcher:
 one path segment. For anything else, ask the agent for a custom watch, such
 as **"Watch build.log and tell me when the smoke tests fail."** The agent
 writes a shell command that prints only meaningful changes, so quiet polls
-do not wake it. A watch can continue reporting events or end after a
-one-shot condition.
+do not wake it. PR and branch watches can continue reporting events; an
+individual Actions run or Azure build ends after completion.
 
-For `dotnet/maui` `inflight/current` and `release/11.0.1xx-rc2`, the bundled
+For the `dotnet/maui` `main`, `net11.0`, `release/11.0.1xx-rc2`,
+`inflight/current`, and `inflight/candidate` branches, the bundled
 [`MAUI branch example`](copilot-monitors/examples/watch-maui-branch-ci.mjs)
 shows exact-head Azure pipeline **jobs** rather than GitHub check-run
 summaries. Ask the agent to start it as a continuous watch; the
 [extension guide](copilot-monitors/README.md#maui-branch-azure-jobs-example)
 includes a one-shot verification command and CI-only follow-up settings.
+To act when just `maui-pr` finishes, rather than waiting for UI and device
+tests, ask for `--notify-pipeline maui-pr` and a matching follow-up prefix.
 
 The canvas groups checks by pipeline, shows pending, passed, failed, skipped,
 and canceled results, and lets you rename watches, change the built-in

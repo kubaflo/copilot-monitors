@@ -12,7 +12,7 @@ In the **Live Watches** canvas, paste one of these and it's watched right away,
 without an agent turn:
 
 - `https://github.com/owner/repo/pull/123` or `#123` (for this repo) —
-  waits for PR checks
+  tracks PR checks across pushes until the PR closes or merges
 - `https://github.com/owner/repo/actions/runs/123` — waits for a GitHub
   Actions run
 - `https://github.com/owner/repo/tree/main` — tracks new commits and CI
@@ -25,11 +25,15 @@ without an agent turn:
 Paste a plain URL, not a Markdown link. Other URLs and descriptions need the
 agent to set up a custom watch.
 
-CI watches send a message to chat when they finish, with the result and failed
-jobs. Branch watches also report completed CI checks attached to their current
-head, as well as new commits; already-completed checks at startup do not send
-an alert. Changes to an already-completed check inventory do not repeat that
-alert; a new in-progress CI cycle on the same head can report its completion.
+CI watches send a message to chat when a cycle finishes, with the result and
+failed jobs. PR watches stay running across pushes and same-head CI reruns;
+their follow-ups run after completed checks, not merely on a new push. They
+stop when the PR closes or merges. Branch watches also report completed CI
+checks attached to their current head, as well as new commits; already-completed
+branch checks at startup do not send an alert. Changes to an already-completed
+check inventory do not repeat that alert; a new in-progress CI cycle on the
+same head can report its completion. Actions-run and Azure-build links are
+one-shot.
 These use
 `watch.mjs` with `gh` or the Azure DevOps REST API (anonymously, falling back
 to `az login` for private projects). Polling runs locally without invoking AI.
@@ -99,12 +103,27 @@ prefix, every output batch runs the follow-up.
 For ongoing conditions, the agent can set `continuous: true` to keep watching
 until stopped or until this session ends, without periodically waking the agent
 to restart. That option cannot be combined with `timeoutMinutes`.
+For a PR fix → commit → push → observe loop, add a follow-up such as
+“If this CI cycle failed, fix the failure, validate, commit, and push; stop
+when it passes or after three unsuccessful attempts.” A continuous PR watch
+wakes the agent on each completed cycle. It does not edit code or trigger a
+pipeline itself; a push starts the repository's normal CI. Avoid an unbounded
+follow-up that retries the same failure indefinitely.
+
+To act as soon as one pipeline ends instead of waiting for all PR checks, ask
+the agent to watch with `watch.mjs pr owner/repo 123 --pipeline maui-pr` and
+configure `followUpOnOutput: true` with
+`followUpOnOutputPrefix: "CI ended: maui-pr |"`. Other checks stay visible
+and do not gate this follow-up. A pipeline is matched by its exact workflow
+name or by check names beginning with `maui-pr (` or `maui-pr /`; an unrelated
+name such as `maui-pr-uitests` does not match.
 
 ## MAUI branch Azure jobs example
 
 The optional `examples/watch-maui-branch-ci.mjs` script watches
-`dotnet/maui` `inflight/current` or `release/11.0.1xx-rc2` at a five-minute
-cadence. Unlike the general GitHub branch watch, it displays **Azure timeline
+`dotnet/maui` `main`, `net11.0`, `release/11.0.1xx-rc2`,
+`inflight/current`, or `inflight/candidate` at a five-minute cadence.
+Unlike the general GitHub branch watch, it displays **Azure timeline
 jobs** from the three MAUI pipelines. Each build must match the exact branch
 and head commit. Job rows link to Azure logs; unrelated PR builds and parent
 checks do not inflate the counts. Missing builds show pending inventory rather
@@ -118,10 +137,18 @@ node "${COPILOT_HOME:-$HOME/.copilot}/extensions/copilot-monitors/examples/watch
 
 To watch continuously, omit `--once` and pass the command to
 `copilot_monitor_start` with `continuous: true` and `progress: true`. For a
-follow-up only after the three Azure builds finish, set
-`followUpOnOutput: true` and
-`followUpOnOutputPrefix: "Azure branch CI finished:"`; branch-head changes
-and access errors remain ordinary alerts. The example requires public
+follow-up only after the three Azure builds finish, set `followUpOnOutput: true`
+and `followUpOnOutputPrefix: "Azure branch CI finished:"`. To act as soon as
+`maui-pr` finishes while UI/device tests are still running, append
+`--notify-pipeline maui-pr` to the command and set
+`followUpOnOutputPrefix: "Azure branch CI finished: maui-pr |"`. Repeat
+`--notify-pipeline` with other names to notify when any selected pipeline
+finishes; use the common `"Azure branch CI finished:"` prefix for all of them.
+The other pipelines remain visible in progress but do not delay notifications.
+Branch-head changes and access errors remain ordinary alerts. A completed
+build already present on the first poll is shown without an initial follow-up;
+start the watch before pushing or inspect the existing result yourself.
+The example requires public
 `dnceng-public/public` builds and GitHub CLI authentication.
 
 ## Limits
