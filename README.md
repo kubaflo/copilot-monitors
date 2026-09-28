@@ -96,6 +96,13 @@ writes a shell command that prints only meaningful changes, so quiet polls
 do not wake it. A watch can continue reporting events or end after a
 one-shot condition.
 
+For `dotnet/maui` `inflight/current` and `release/11.0.1xx-rc2`, the bundled
+[`MAUI branch example`](copilot-monitors/examples/watch-maui-branch-ci.mjs)
+shows exact-head Azure pipeline **jobs** rather than GitHub check-run
+summaries. Ask the agent to start it as a continuous watch; the
+[extension guide](copilot-monitors/README.md#maui-branch-azure-jobs-example)
+includes a one-shot verification command and CI-only follow-up settings.
+
 The canvas groups checks by pipeline, shows pending, passed, failed, skipped,
 and canceled results, and lets you rename watches, change the built-in
 polling frequency, or configure a follow-up prompt. When one runs, chat shows
@@ -120,7 +127,7 @@ extension SDK. Run the focused Node tests from the extension folder:
 
 ```bash
 cd copilot-monitors
-node --test *.test.mjs
+node --test *.test.mjs examples/*.test.mjs
 ```
 
 Licensed under [MIT](LICENSE).

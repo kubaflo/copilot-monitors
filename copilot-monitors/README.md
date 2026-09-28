@@ -87,6 +87,30 @@ For ongoing conditions, the agent can set `continuous: true` to keep watching
 until stopped or until this session ends, without periodically waking the agent
 to restart. That option cannot be combined with `timeoutMinutes`.
 
+## MAUI branch Azure jobs example
+
+The optional `examples/watch-maui-branch-ci.mjs` script watches
+`dotnet/maui` `inflight/current` or `release/11.0.1xx-rc2` at a five-minute
+cadence. Unlike the general GitHub branch watch, it displays **Azure timeline
+jobs** from the three MAUI pipelines. Each build must match the exact branch
+and head commit. Job rows link to Azure logs; unrelated PR builds and parent
+checks do not inflate the counts. Missing builds show pending inventory rather
+than fabricated jobs.
+
+To inspect one live snapshot without starting a watch, run:
+
+```bash
+node "${COPILOT_HOME:-$HOME/.copilot}/extensions/copilot-monitors/examples/watch-maui-branch-ci.mjs" release/11.0.1xx-rc2 --once
+```
+
+To watch continuously, omit `--once` and pass the command to
+`copilot_monitor_start` with `continuous: true` and `progress: true`. For a
+follow-up only after the three Azure builds finish, set
+`followUpOnOutput: true` and
+`followUpOnOutputPrefix: "Azure branch CI finished:"`; branch-head changes
+and access errors remain ordinary alerts. The example requires public
+`dnceng-public/public` builds and GitHub CLI authentication.
+
 ## Limits
 
 - Agent-written monitors have a deadline: 30 minutes by default, up to 240.
@@ -102,4 +126,4 @@ to restart. That option cannot be combined with `timeoutMinutes`.
 - Monitors live only while the session's Copilot process runs. They are not
   restored after a restart, and their commands are killed if the extension exits.
 
-Run the tests with `node --test *.test.mjs` in this directory.
+Run the tests with `node --test *.test.mjs examples/*.test.mjs` in this directory.
