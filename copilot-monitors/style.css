@@ -293,8 +293,14 @@ summary { width: fit-content; color: var(--monitor-muted); font-size: 14px; font
 summary:hover { color: var(--monitor-blue); }
 .create-follow-up { grid-column: 1 / -1; margin: 0; }
 .create-follow-up > summary { color: var(--monitor-muted); }
-.create-follow-up textarea { min-height: 64px; margin-top: 8px; }
-.edit-follow-up > label { display: block; margin: 10px 0 6px; color: var(--monitor-muted); font-size: 14px; }
+.create-follow-up textarea, .edit-follow-up textarea {
+    min-height: 36px;
+    max-height: 140px;
+    padding: 7px 10px;
+    font-size: 13px;
+    line-height: 20px;
+}
+.create-follow-up textarea { width: min(100%, 480px); margin-top: 8px; }
 .watch-settings { position: relative; margin: 0; }
 .watch-settings[open] { z-index: 2; }
 .watch-settings > summary {
@@ -350,7 +356,7 @@ summary:hover { color: var(--monitor-blue); }
 .follow-up-settings > summary { color: var(--monitor-muted); }
 .follow-up-settings.configured > summary { color: var(--monitor-blue); }
 .edit-follow-up { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin: 10px 0 4px; }
-.edit-follow-up textarea { flex: 1 1 220px; width: auto; min-width: 0; min-height: 36px; max-height: 140px; padding: 7px 10px; font-size: 13px; line-height: 20px; }
+.edit-follow-up textarea { flex: 1 1 220px; width: auto; min-width: 0; }
 .follow-up-actions { display: flex; flex: none; gap: 6px; margin-left: auto; }
 .follow-up-actions button { min-height: 36px; padding: 5px 10px; font-size: 13px; }
 .follow-up-actions button[type=submit] { border-color: var(--monitor-button-border); background: var(--monitor-button-background); color: var(--monitor-button-text); }

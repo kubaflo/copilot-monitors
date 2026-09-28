@@ -139,6 +139,66 @@ test("continuous change watches run a follow-up for each output batch, not for q
     assert.equal(messages.length, 2);
 });
 
+test("a continuous watch follows up only on matching CI lines and reports branch changes separately", async (t) => {
+    const { manager, messages } = fixture(t, { batchMs: 50 });
+    const monitor = await manager.start({
+        description: "Release",
+        command: "echo 'branch moved'; echo 'CI ended: first run'; sleep 0.25; echo 'branch moved again'; sleep 0.25; echo 'CI ended: second run'; sleep 30",
+        continuous: true, followUpPrompt: "Review CI", followUpOnOutput: true,
+        followUpOnOutputPrefix: "CI ended:",
+    });
+    assert.equal(monitor.followUpOnOutputPrefix, "CI ended:");
+    await until(() => messages.length === 2);
+    assert.equal(typeof messages[0], "string");
+    assert.match(messages[0], /branch moved/);
+    assert.doesNotMatch(messages[0], /CI ended:|User-configured follow-up/);
+    assert.equal(messages[1].source, "system");
+    assert.match(messages[1].prompt, /CI ended: first run/);
+    assert.doesNotMatch(messages[1].prompt, /branch moved/);
+    assert.match(messages[1].prompt, /User-configured follow-up.*Review CI/);
+    await until(() => messages.length === 4);
+    assert.equal(typeof messages[2], "string");
+    assert.match(messages[2], /branch moved again/);
+    assert.equal(messages[3].source, "system");
+    assert.match(messages[3].prompt, /CI ended: second run/);
+    assert.equal(manager.list()[0].status, "running");
+    assert.equal(manager.list()[0].notifications, 4);
+    manager.stop(monitor.id);
+});
+
+test("a filtered watch that exits after mixed output keeps branch alerts separate without a duplicate exit", async (t) => {
+    const { manager, messages } = fixture(t, { batchMs: 10_000 });
+    await manager.start({
+        description: "Release", command: "echo 'CI ended: done'; echo 'branch moved'; exit 0",
+        continuous: true, followUpPrompt: "Review CI", followUpOnOutput: true,
+        followUpOnOutputPrefix: "CI ended:",
+    });
+    await until(() => manager.list()[0].status === "exited" && messages.length === 2);
+    assert.equal(messages[0].source, "system");
+    assert.match(messages[0].prompt, /CI ended: done/);
+    assert.doesNotMatch(messages[0].prompt, /branch moved/);
+    assert.equal(typeof messages[1], "string");
+    assert.match(messages[1], /branch moved/);
+    assert.match(messages[1], /exited with code 0/);
+    assert.doesNotMatch(messages[1], /User-configured follow-up/);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(messages.length, 2);
+});
+
+test("a filtered watch failure without matching output reports the error, not a CI follow-up", async (t) => {
+    const { manager, messages } = fixture(t);
+    await manager.start({
+        description: "Release", command: "echo 'branch moved'; echo 'API unavailable' >&2; exit 2",
+        continuous: true, followUpPrompt: "Review CI", followUpOnOutput: true,
+        followUpOnOutputPrefix: "CI ended:",
+    });
+    await until(() => messages.length === 1);
+    assert.equal(typeof messages[0], "string");
+    assert.match(messages[0], /failed \(exit 2\)/);
+    assert.match(messages[0], /API unavailable/);
+    assert.doesNotMatch(messages[0], /User-configured follow-up/);
+});
+
 test("a running watch can add, edit, and remove its follow-up before an event", async (t) => {
     const { manager, messages } = fixture(t, { batchMs: 20 });
     const monitor = await manager.start({
@@ -422,6 +482,10 @@ test("invalid input is rejected", async (t) => {
         await assert.rejects(manager.start({ description: "Bad", command: "true", followUpPrompt }), /Follow-up prompt/);
     }
     await assert.rejects(manager.start({ description: "Bad", command: "true", followUpOnOutput: "true" }), /followUpOnOutput/);
+    await assert.rejects(manager.start({ description: "Bad", command: "true", followUpOnOutputPrefix: "CI ended:" }), /followUpOnOutputPrefix/);
+    for (const followUpOnOutputPrefix of [null, 123, "", " ", "CI\nended:", "x".repeat(101)]) {
+        await assert.rejects(manager.start({ description: "Bad", command: "true", followUpOnOutput: true, followUpOnOutputPrefix }), /followUpOnOutputPrefix/);
+    }
     await assert.rejects(async () => manager.setFollowUp("missing", "Do work"), /was not found/);
     assert.equal(manager.list().length, 0);
 });

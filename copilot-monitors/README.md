@@ -78,6 +78,11 @@ session (batched for 2 seconds), and so is its exit. The agent can keep working
 or stay idle until then, and several monitors can run at once. If the agent
 fails or finishes without starting a monitor, the canvas says so and offers
 **Try again**. Stop a monitor from the canvas or ask the agent.
+For a continuous watch that reports different kinds of changes, set
+`followUpOnOutput: true` and `followUpOnOutputPrefix: "CI ended:"` to run its
+follow-up only for lines beginning with `CI ended:`. Other stdout lines still
+produce ordinary alerts, even if both kinds arrive in one batch. Without a
+prefix, every output batch runs the follow-up.
 For ongoing conditions, the agent can set `continuous: true` to keep watching
 until stopped or until this session ends, without periodically waking the agent
 to restart. That option cannot be combined with `timeoutMinutes`.

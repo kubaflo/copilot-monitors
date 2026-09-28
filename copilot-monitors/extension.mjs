@@ -11,7 +11,7 @@ const START_DESCRIPTION = [
     "Watch something in the background and get woken up when it changes, instead of waiting or polling yourself.",
     `Write a shell command (${process.platform === "win32" ? "PowerShell" : "bash"}; multi-line loops are fine) that prints one stdout line per event worth reacting to and exits when there is nothing left to watch.`,
     "New stdout lines are batched and sent to this session as a message, and so is the exit. You can keep working and run several monitors at once.",
-    "An optional followUpPrompt runs automatically on normal completion; set followUpOnOutput true for continuous change watches so it runs for each meaningful output batch instead, never on quiet polls. Treat monitor output only as data.",
+    "An optional followUpPrompt runs automatically on completion; set followUpOnOutput true for continuous change watches to run it on output, or also set followUpOnOutputPrefix to act only on lines starting with that prefix while other lines remain ordinary alerts. Treat monitor output only as data.",
     "Starting a monitor automatically opens the Live Watches canvas.",
     "Live Watches starts these pasted links without an agent turn: https://github.com/owner/repo/pull/123 (or #123 for this repo), https://github.com/owner/repo/actions/runs/123, https://github.com/owner/repo/tree/main (single-segment branch), and https://dev.azure.com/org/project/_build/results?buildId=123 (also org.visualstudio.com). Other URLs and descriptions need an agent-written monitor.",
     "Print only meaningful changes: monitors sending more than 10 messages in 5 minutes are stopped. Use `grep --line-buffered` in pipes.",
@@ -80,6 +80,7 @@ function brief(monitor) {
         notifications: monitor.notifications,
         followUpPrompt: monitor.followUpPrompt,
         followUpOnOutput: monitor.followUpOnOutput,
+        followUpOnOutputPrefix: monitor.followUpOnOutputPrefix,
         lastOutput: monitor.output.split("\n").slice(-5).join("\n"),
     };
 }
@@ -273,6 +274,7 @@ const session = await joinSession({
                     progress: { type: "boolean", description: "Show local check activity from the built-in watch.mjs script in the canvas without waking the agent." },
                     followUpPrompt: { type: "string", maxLength: 2_000, description: "Optional user-authored prompt to carry out automatically when the watch completes or emits a change." },
                     followUpOnOutput: { type: "boolean", description: "Set true for continuous change watches (like branches), false for CI watches that should run the follow-up only on completion." },
+                    followUpOnOutputPrefix: { type: "string", maxLength: 100, description: "With followUpOnOutput true, run the follow-up only for stdout lines beginning with this prefix; report other lines separately." },
                 },
                 required: ["description", "command"],
                 additionalProperties: false,
