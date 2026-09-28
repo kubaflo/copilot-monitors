@@ -104,10 +104,16 @@ async function jobStages(name, build, branch, sha) {
     return { stages, jobCount: jobs.length };
 }
 
-export async function snapshot(branch) {
-    if (!allowedBranches.has(branch)) throw new Error(`Unsupported branch: ${branch}`);
+async function readHead(branch) {
     const commit = await githubApi(`repos/${repo}/commits/${encodeURIComponent(branch)}`);
     if (!/^[0-9a-f]{40}$/.test(commit?.sha ?? "")) throw new Error("GitHub returned an invalid head SHA.");
+    return commit.sha;
+}
+
+export async function snapshot(branch, head = null) {
+    if (!allowedBranches.has(branch)) throw new Error(`Unsupported branch: ${branch}`);
+    const sha = head ?? await readHead(branch);
+    if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("GitHub returned an invalid head SHA.");
     const url = new URL("https://dev.azure.com/dnceng-public/public/_apis/build/builds");
     url.search = new URLSearchParams({
         "api-version": "7.1",
@@ -126,7 +132,7 @@ export async function snapshot(branch) {
     }
     const data = await response.json();
     if (!Array.isArray(data.value)) throw new Error("Azure returned no build collection.");
-    const selected = selectBuilds(data.value, branch, commit.sha);
+    const selected = selectBuilds(data.value, branch, sha);
     const builds = selected.map(({ name, build }) => ({
         name,
         state: buildState(build),
@@ -137,11 +143,11 @@ export async function snapshot(branch) {
             url: `https://dev.azure.com/dnceng-public/public/_build/results?buildId=${build.id}`,
         } : {}),
     }));
-    const timelines = await Promise.all(selected.map(({ name, build }) => jobStages(name, build, branch, commit.sha)));
+    const timelines = await Promise.all(selected.map(({ name, build }) => jobStages(name, build, branch, sha)));
     const complete = selected.every(({ build }) =>
         build?.status === "completed" && buildState(build) !== "unknown");
     return {
-        sha: commit.sha,
+        sha,
         builds,
         stages: timelines.flatMap((timeline) => timeline.stages),
         jobCount: timelines.reduce((count, timeline) => count + timeline.jobCount, 0),
@@ -152,6 +158,7 @@ export async function snapshot(branch) {
 
 export async function watch(branch, {
     notifyPipelines = [],
+    readHeadSha = readHead,
     readSnapshot = snapshot,
     wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     emit = (line) => console.log(line),
@@ -170,7 +177,11 @@ export async function watch(branch, {
     for (;;) {
         report("checking");
         try {
-            const current = await readSnapshot(branch);
+            const head = await readHeadSha(branch);
+            if (!/^[0-9a-f]{40}$/.test(head)) throw new Error("GitHub returned an invalid head SHA.");
+            if (previous && head !== previous) report("checking", undefined, []);
+            const current = await readSnapshot(branch, head);
+            if (current.sha !== head) throw new Error("Branch head changed while reading CI; retrying.");
             if (lastError) emit(`Watching ${repo} ${branch}: branch CI access recovered.`);
             if (previous && current.sha !== previous) {
                 emit(`${repo} ${branch} moved ${previous.slice(0, 10)} -> ${current.sha.slice(0, 10)}. https://github.com/${repo}/tree/${branch}`);

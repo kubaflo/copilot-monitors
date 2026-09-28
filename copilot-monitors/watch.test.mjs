@@ -108,6 +108,7 @@ test("branch polling only emits when the head changes", async () => {
     const heads = [oldSha, oldSha, oldSha, newSha, newSha];
     const lines = [];
     const phases = [];
+    let resets = 0;
     const end = new Error("test complete");
     end.permanent = true;
     await assert.rejects(watchBranch("dotnet/maui", "net11.0", {
@@ -123,13 +124,18 @@ test("branch polling only emits when the head changes", async () => {
         },
         wait: async () => {},
         emit: (line) => { lines.push(line); },
-        report: (phase) => { phases.push(phase); },
+        report: (phase, _interval, stages) => {
+            phases.push(phase);
+            if (phase === "checking" && stages?.length === 0) resets++;
+        },
     }), end);
     assert.deepEqual(lines, [
         "dotnet/maui net11.0 moved aaaaaaaaaa -> bbbbbbbbbb (ahead, 1 new commit): "
         + "Fix CollectionView. https://github.com/dotnet/maui/tree/net11.0",
     ]);
-    assert.deepEqual(phases, ["checking", "waiting", "checking", "waiting", "checking", "waiting", "checking", "waiting", "checking", "waiting", "checking"]);
+    assert.deepEqual(phases, ["checking", "waiting", "checking", "waiting", "checking", "waiting",
+        "checking", "checking", "waiting", "checking", "waiting", "checking"]);
+    assert.equal(resets, 1);
 });
 
 test("branch comparison errors remain visible in its change notification", async () => {
@@ -359,6 +365,7 @@ test("PR watcher follows successive pushes and a selected pipeline without waiti
     let index = 0;
     const lines = [];
     const phases = [];
+    let resets = 0;
     const url = "https://github.com/dotnet/maui/pull/42";
     const result = await watchPullRequest("dotnet/maui", "42", {
         pipeline: "maui-pr",
@@ -371,7 +378,10 @@ test("PR watcher follows successive pushes and a selected pipeline without waiti
         },
         wait: async () => { index++; },
         emit: (line) => lines.push(line),
-        report: (phase) => phases.push(phase),
+        report: (phase, _interval, stages) => {
+            phases.push(phase);
+            if (phase === "checking" && stages?.length === 0) resets++;
+        },
     });
     assert.match(result, /dotnet\/maui#42 merged; watch ended/);
     assert.equal(index, snapshots.length - 1);
@@ -384,6 +394,7 @@ test("PR watcher follows successive pushes and a selected pipeline without waiti
     assert.match(lines[4], /1 failed or canceled/);
     assert.match(lines[5], /1 passed/);
     assert.equal(phases.at(-1), "complete");
+    assert.equal(resets, 2);
 });
 
 test("default PR watch waits for all checks and re-arms after a new push", async () => {

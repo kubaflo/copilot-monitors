@@ -60,6 +60,10 @@ September 27, 2026 and may have changed since.
    optionally set a follow-up for each completed PR CI cycle. PR watches stay
    active across pushes until the PR closes or merges.
 
+After a push, the next configured poll clears the previous commit's results
+and displays the new CI cycle (or pending inventory until its jobs appear).
+The canvas refreshes automatically; no manual watch restart is needed.
+
 Alternatively, on macOS or Linux, install from a fresh clone:
 
 ```bash

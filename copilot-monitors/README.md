@@ -40,7 +40,14 @@ to `az login` for private projects). Polling runs locally without invoking AI.
 If GitHub CLI authentication is blocked by organization SSO, branch watches
 fall back to GitHub's anonymous public API. That API has a lower rate limit;
 use a longer check interval (up to 15 minutes) for repositories with many checks.
-One-shot watches poll every minute; branch watches poll every five minutes.
+PR, Actions-run, and Azure-build watches poll every minute; branch watches
+poll every five minutes.
+On the next configured poll after a push, PR and branch watches clear the
+previous head's checks before loading the new head's results. Until its CI
+appears, the MAUI Azure branch example shows pending inventory for the new
+commit rather than retaining the old commit's completed jobs. Canvas updates
+then appear automatically without restarting the watch; a remote push is not
+instantaneously observable between polls.
 The canvas shows the latest check, the next scheduled check, an overall
 completion bar, and every CI stage or check with its current state. Pipeline
 groups report running, queued, and unknown checks separately from completed

@@ -329,6 +329,7 @@ export async function watchBranch(repo, branch, {
         report("checking");
         try {
             const head = await readHead();
+            if (head !== previous) report("checking", undefined, []);
             checks = await getChecks(head);
             if (head !== previous) {
                 let line;
@@ -411,10 +412,12 @@ export async function watchPullRequest(repo, number, {
                 report("complete");
                 return `${label} ${before.state.toLowerCase()}; watch ended. ${beforeUrl}`;
             }
+            if (head && before.headRefOid !== head) report("checking", undefined, []);
             const checks = await getChecks();
             const current = await getPullRequest();
             const target = validate(current);
             if (before?.headRefOid !== current.headRefOid) {
+                report("checking", undefined, []);
                 throw new Error(`PR head changed while reading checks for ${label}; retrying.`);
             }
             if (current.state !== "OPEN") {

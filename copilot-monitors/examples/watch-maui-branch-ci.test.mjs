@@ -32,6 +32,7 @@ test("the five MAUI branch names accept the same Azure-only watcher", async () =
     const end = new Error("test complete");
     for (const branch of ["main", "net11.0", "release/11.0.1xx-rc2", "inflight/current", "inflight/candidate"]) {
         await assert.rejects(watch(branch, {
+            readHeadSha: async () => "a".repeat(40),
             readSnapshot: async (selectedBranch) => {
                 assert.equal(selectedBranch, branch);
                 return { sha: "a".repeat(40), builds: [], complete: false, key: "none", stages: [] };
@@ -41,6 +42,37 @@ test("the five MAUI branch names accept the same Azure-only watcher", async () =
             report: () => {},
         }), end);
     }
+});
+
+test("a pushed head clears old CI before showing pending inventory and new jobs", async () => {
+    const oldHead = "a".repeat(40);
+    const newHead = "b".repeat(40);
+    const snapshots = [
+        { sha: oldHead, complete: true, key: "old", builds: [], stages: [{ name: "Old job", state: "passed" }] },
+        { sha: newHead, complete: false, key: "missing", builds: [], stages: [{ name: "maui-pr: awaiting jobs", state: "queued" }] },
+        { sha: newHead, complete: false, key: "new", builds: [], stages: [{ name: "New job", state: "running" }] },
+    ];
+    const progress = [];
+    const lines = [];
+    const end = new Error("test complete");
+    let index = 0;
+    await assert.rejects(watch("inflight/current", {
+        readHeadSha: async () => snapshots[index].sha,
+        readSnapshot: async (_, head) => {
+            assert.equal(head, snapshots[index].sha);
+            if (index === 1) assert.deepEqual(progress.at(-1), ["checking", []]);
+            return snapshots[index];
+        },
+        wait: async () => { if (index === snapshots.length - 1) throw end; index++; },
+        emit: (line) => lines.push(line),
+        report: (phase, _interval, stages) => progress.push([phase, stages]),
+    }), end);
+    assert.deepEqual(progress.filter(([phase]) => phase === "waiting").map(([, stages]) => stages.map(({ name }) => name)),
+        [["Old job"], ["maui-pr: awaiting jobs"], ["New job"]]);
+    assert.equal(progress.filter(([phase, stages]) => phase === "checking" && stages?.length === 0).length, 1);
+    assert.deepEqual(lines, [
+        `dotnet/maui inflight/current moved ${oldHead.slice(0, 10)} -> ${newHead.slice(0, 10)}. https://github.com/dotnet/maui/tree/inflight/current`,
+    ]);
 });
 
 test("selected MAUI pipeline ends trigger each fix-push-rerun cycle before other pipelines finish", async () => {
@@ -72,7 +104,11 @@ test("selected MAUI pipeline ends trigger each fix-push-rerun cycle before other
     const end = new Error("test complete");
     await assert.rejects(watch("release/11.0.1xx-rc2", {
         notifyPipelines: ["maui-pr"],
-        readSnapshot: async () => snapshots[index],
+        readHeadSha: async () => snapshots[index].sha,
+        readSnapshot: async (_, head) => {
+            assert.equal(head, snapshots[index].sha);
+            return snapshots[index];
+        },
         wait: async () => { if (index === snapshots.length - 1) throw end; index++; },
         emit: (line) => lines.push(line),
         report: () => {},
@@ -97,6 +133,7 @@ test("default MAUI watch waits for all pipelines", async () => {
     const lines = [];
     const end = new Error("test complete");
     await assert.rejects(watch("inflight/current", {
+        readHeadSha: async () => snapshots[index].sha,
         readSnapshot: async () => snapshots[index],
         wait: async () => { if (index === snapshots.length - 1) throw end; index++; },
         emit: (line) => lines.push(line),

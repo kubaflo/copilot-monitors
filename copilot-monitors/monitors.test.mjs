@@ -427,6 +427,29 @@ test("built-in progress updates the canvas without waking the agent; completion 
     assert.equal(messages.length, 1);
 });
 
+test("a new head clears completed CI before the new job inventory arrives", async (t) => {
+    const { manager, messages } = fixture(t);
+    const script = [
+        `import { reportProgress } from ${JSON.stringify(new URL("./progress.mjs", import.meta.url).href)};`,
+        'reportProgress("waiting", 5000, [{name:"Old job",state:"passed"}]);',
+        "await new Promise((resolve) => setTimeout(resolve, 150));",
+        'reportProgress("checking", undefined, []);',
+        "await new Promise((resolve) => setTimeout(resolve, 150));",
+        'reportProgress("waiting", 5000, [{name:"maui-pr: awaiting jobs",state:"queued"}]);',
+        "await new Promise((resolve) => setTimeout(resolve, 150));",
+    ].join(" ");
+    const monitor = await manager.start({
+        description: "Branch CI", command: `node --input-type=module -e ${JSON.stringify(script)}`,
+        continuous: true, progress: true,
+    });
+    await until(() => manager.list()[0].stages?.[0]?.name === "Old job");
+    await until(() => manager.list()[0].phase === "checking" && manager.list()[0].stages?.length === 0);
+    await until(() => manager.list()[0].stages?.[0]?.name === "maui-pr: awaiting jobs");
+    assert.equal(manager.list()[0].stages[0].state, "queued");
+    assert.deepEqual(messages, []);
+    manager.stop(monitor.id);
+});
+
 test("malformed progress remains visible as stderr on watcher failure", async (t) => {
     const { manager, messages } = fixture(t);
     await manager.start({
