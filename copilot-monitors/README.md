@@ -37,9 +37,11 @@ one-shot.
 These use
 `watch.mjs` with `gh` or the Azure DevOps REST API (anonymously, falling back
 to `az login` for private projects). Polling runs locally without invoking AI.
-If GitHub CLI authentication is blocked by organization SSO, branch watches
-fall back to GitHub's anonymous public API. That API has a lower rate limit;
-use a longer check interval (up to 15 minutes) for repositories with many checks.
+Branch watches use GitHub's current status-check rollup, matching the checks
+shown on the commit page rather than counting older reruns of the same checks.
+This inventory requires an authenticated GitHub CLI; authorize its access to
+the organization if SSO blocks it. Commit metadata can still fall back to
+GitHub's anonymous public API, which has a lower rate limit.
 PR, Actions-run, and Azure-build watches poll every minute; branch watches
 poll every five minutes.
 On the next configured poll after a push, PR and branch watches clear the

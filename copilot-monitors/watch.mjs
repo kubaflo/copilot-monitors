@@ -16,6 +16,25 @@ const MAX_ERRORS = 5;
 const AZDO_RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798";
 const TOKEN_MAX_AGE_MS = 30 * 60_000;
 const CHECK_RUN_FIELDS = "{total_count,check_runs:[.check_runs[] | {id,name,status,conclusion,details_url,html_url,app:{name:.app.name,slug:.app.slug}}]} | @json";
+const CURRENT_CHECKS_QUERY = `query($owner: String!, $name: String!, $oid: GitObjectID!, $after: String) {
+    repository(owner: $owner, name: $name) {
+        object(oid: $oid) {
+            ... on Commit {
+                statusCheckRollup {
+                    contexts(first: 100, after: $after) {
+                        totalCount
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                            __typename
+                            ... on CheckRun { id name status conclusion detailsUrl }
+                            ... on StatusContext { id context state targetUrl }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}`;
 
 export function createFrequencyControl(initialMs, {
     now = Date.now,
@@ -168,7 +187,7 @@ export function branchMessage(repo, branch, previous, head, comparison) {
     const changes = titles.length ? `: ${titles.join("; ")}` : "";
     return `${repo} ${branch} moved ${previous.slice(0, 10)} -> ${head.slice(0, 10)} `
         + `(${comparison.status}, ${count} new commit${count === 1 ? "" : "s"})${changes}. `
-        + `https://github.com/${repo}/tree/${encodeURIComponent(branch)}`;
+        + `https://github.com/${repo}/tree/${branch.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 export function branchChecksMessage(repo, branch, head, checks) {
@@ -276,6 +295,84 @@ export async function branchCheckRuns(repo, head,
     throw error;
 }
 
+export async function branchCurrentChecks(repo, head, query = gh) {
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || !/^[0-9a-f]{40}$/.test(head)) {
+        throw new Error("Current checks require a valid owner/repository and commit SHA.");
+    }
+    const [owner, name] = repo.split("/");
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const checks = new Map();
+        const cursors = new Set();
+        let cursor;
+        let total;
+        let changed = false;
+        for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+            const response = await query(["api", "graphql", "-f", `query=${CURRENT_CHECKS_QUERY}`,
+                "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `oid=${head}`,
+                ...(cursor ? ["-F", `after=${cursor}`] : [])]);
+            const commit = response?.data?.repository?.object;
+            if (!commit) throw new Error(`GitHub returned no commit for ${repo} ${head}.`);
+            if (commit.statusCheckRollup === null) {
+                if (!cursor) return [];
+                break;
+            }
+            const page = commit.statusCheckRollup?.contexts;
+            if (!Array.isArray(page?.nodes) || !Number.isInteger(page.totalCount) || page.totalCount < 0
+                || typeof page.pageInfo?.hasNextPage !== "boolean") {
+                throw new Error(`GitHub returned invalid current checks for ${repo} ${head}.`);
+            }
+            if (total !== undefined && page.totalCount !== total) changed = true;
+            total = page.totalCount;
+            for (const node of page.nodes) {
+                if (typeof node?.id !== "string" || !node.id
+                    || (node.__typename === "CheckRun" && (!node.name
+                        || typeof node.name !== "string"
+                        || typeof node.status !== "string"))
+                    || (node.__typename === "StatusContext" && (!node.context
+                        || typeof node.context !== "string"
+                        || typeof node.state !== "string"))
+                    || !["CheckRun", "StatusContext"].includes(node.__typename)) {
+                    throw new Error(`GitHub returned an invalid check for ${repo} ${head}.`);
+                }
+                checks.set(node.id, node);
+            }
+            if (!page.pageInfo.hasNextPage) {
+                if (!changed && checks.size === total) {
+                    const fallback = `https://github.com/${repo}/commit/${head}/checks`;
+                    const destination = (value) => {
+                        try {
+                            const url = new URL(value);
+                            return url.protocol === "https:" && !url.username && !url.password ? url.href : fallback;
+                        } catch {
+                            return fallback;
+                        }
+                    };
+                    return [...checks.values()].map((check) => check.__typename === "CheckRun" ? {
+                        name: check.name,
+                        status: check.status.toLowerCase(),
+                        conclusion: check.conclusion?.toLowerCase(),
+                        details_url: destination(check.detailsUrl),
+                    } : {
+                        name: check.context,
+                        status: check.state === "PENDING" ? "pending" : "completed",
+                        conclusion: check.state === "ERROR" ? "failure" : check.state.toLowerCase(),
+                        details_url: destination(check.targetUrl),
+                    });
+                }
+                break;
+            }
+            cursor = page.pageInfo.endCursor;
+            if (typeof cursor !== "string" || !cursor || cursors.has(cursor)) {
+                throw new Error(`GitHub returned an invalid current-check cursor for ${repo} ${head}.`);
+            }
+            cursors.add(cursor);
+        }
+    }
+    const error = new Error(`GitHub current checks for ${repo} ${head} changed while loading; retrying.`);
+    error.transient = true;
+    throw error;
+}
+
 function branchStages(checks) {
     return checkStages(checks.map((check) => ({
         name: check.name,
@@ -288,7 +385,7 @@ function branchStages(checks) {
 
 export async function watchBranch(repo, branch, {
     getCommit = () => githubApi(`repos/${repo}/commits/${encodeURIComponent(branch)}`),
-    getChecks = (head) => branchCheckRuns(repo, head),
+    getChecks = (head) => branchCurrentChecks(repo, head),
     compare = (previous, head) => githubApi(`repos/${repo}/compare/${previous}...${head}`),
     wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     emit = (line) => process.stdout.write(`${line}\n`),
@@ -297,7 +394,9 @@ export async function watchBranch(repo, branch, {
     getIntervalMs = () => intervalMs,
     retryWait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
-    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || !/^[A-Za-z0-9_.-]+$/.test(branch)) {
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)
+        || !/^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(branch)
+        || branch.split("/").some((part) => part === "." || part === "..")) {
         throw new Error("Branch watcher requires a valid owner/repository and branch name.");
     }
     const readHead = async () => {

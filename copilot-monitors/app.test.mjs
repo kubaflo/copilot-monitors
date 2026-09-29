@@ -388,6 +388,21 @@ test("pipeline counts distinguish passed checks from finished and failed checks"
     assert.ok(!row.children[2].children.some((item) => item.textContent.includes("9/9")));
 });
 
+test("the current GitHub check rollup retains all 240 clickable checks and accurate counts", () => {
+    const counts = [["passed", 181], ["skipped", 1], ["failed", 34], ["canceled", 21], ["running", 3]];
+    const checks = counts.flatMap(([state, count]) => Array.from({ length: count }, (_, index) =>
+        stage(state === "failed" ? "maui-pr" : "Other checks", state, `${state}-${index}`)));
+    checks[0] = stage("Other checks", "passed", "Build Analysis");
+    const view = context.renderChecks(checks, "main-rollup");
+    assert.equal(view.children[0].children[0].textContent, "237/240 complete");
+    assert.equal(view.children[0].children[1].textContent, "34 failed");
+    assert.equal(view.children.at(-1).children[0].textContent, "All 240 checks");
+    const rows = view.children.at(-1).children[1].children.filter((child) => child.className === "stage-row");
+    assert.equal(rows.length, 240);
+    assert.equal(rows[0].children[0].children[0].tagName, "A");
+    assert.match(rows[0].children[0].children[0].href, /^https:\/\/github\.com\//);
+});
+
 test("pipeline counts show running, queued, unknown, canceled, warning, and skipped separately", () => {
     const checks = [
         stage("mixed", "passed"), stage("mixed", "canceled"),

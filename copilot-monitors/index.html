@@ -16,13 +16,13 @@
                     <summary class="help-trigger" aria-label="About Live Watches">i</summary>
                     <div class="help-popover">
                         <h2>How it works</h2>
-                        <p>Paste a GitHub PR, Actions run, branch, or Azure build link to start watching. <code>#123</code> uses this repo.</p>
+                        <p>Paste a GitHub PR, Actions run, branch, or Azure build link to start watching. Branch watches show every check in GitHub's current commit checks panel. <code>#123</code> uses this repo.</p>
                         <details class="link-formats">
                             <summary>Supported link formats</summary>
                             <ul class="help-links">
                                 <li><strong>GitHub PR</strong> <code>https://github.com/owner/repo/pull/123</code></li>
                                 <li><strong>Actions run</strong> <code>https://github.com/owner/repo/actions/runs/123</code></li>
-                                <li><strong>Branch</strong> <code>https://github.com/owner/repo/tree/main</code> (one-segment name)</li>
+                                <li><strong>Branch</strong> <code>https://github.com/owner/repo/tree/main</code> (also supports MAUI release and inflight branches)</li>
                                 <li><strong>Azure build</strong> <code>https://dev.azure.com/org/project/_build/results?buildId=123</code> (or <code>org.visualstudio.com</code>)</li>
                             </ul>
                         </details>

@@ -65,6 +65,8 @@ and displays the new CI cycle (or pending inventory until its jobs appear).
 The canvas refreshes automatically; no manual watch restart is needed.
 Completed and stopped watches disappear from the canvas; watcher failures
 remain visible for diagnosis.
+Branch links display every check in GitHub's current commit checks panel,
+including job-level CI and other workflows, without older rerun records.
 
 Alternatively, on macOS or Linux, install from a fresh clone:
 
@@ -80,10 +82,9 @@ This copies the folder to
 
 Install and authenticate the [GitHub CLI](https://cli.github.com/) to watch
 GitHub checks. Azure DevOps public builds can be read anonymously; private
-builds may require `az login`. If GitHub CLI authentication is blocked by
-organization SSO, public branch watches can use GitHub's anonymous API;
-choose a longer interval for repositories with many checks to respect its
-lower rate limit.
+builds may require `az login`. Branch watches need a GitHub CLI login authorized for the organization's
+current checks. If SSO blocks commit metadata, its anonymous public API
+fallback has a lower rate limit.
 
 ## What can I watch?
 

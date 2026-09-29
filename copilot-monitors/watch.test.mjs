@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { presetFor } from "./presets.mjs";
-import { actionStages, azureStages, branchCheckRuns, branchChecksMessage, branchMessage, buildMessage, checkStages, checksMessage, createFrequencyControl, githubApi, parseJsonPages, publicGitHubApi, runMessage, watchBranch, watchPullRequest } from "./watch.mjs";
+import { actionStages, azureStages, branchCheckRuns, branchChecksMessage, branchCurrentChecks, branchMessage, buildMessage, checkStages, checksMessage, createFrequencyControl, githubApi, parseJsonPages, publicGitHubApi, runMessage, watchBranch, watchPullRequest } from "./watch.mjs";
 
 test("pasted links become built-in watchers", () => {
     const cases = [
@@ -37,6 +37,17 @@ test("branch links create continuous watchers without a deadline", () => {
     assert.equal(preset.timeoutMinutes, undefined);
     assert.equal(preset.pollIntervalMs, 300_000);
     assert.equal(preset.url, "https://github.com/dotnet/maui/tree/net11.0");
+});
+
+test("MAUI slash-branch links also open the current GitHub checks watcher", () => {
+    for (const branch of ["release/11.0.1xx-rc2", "inflight/current", "inflight/candidate"]) {
+        const preset = presetFor(`https://github.com/dotnet/maui/tree/${branch}`, "darwin");
+        assert.equal(preset.description, `Branch dotnet/maui ${branch}`);
+        assert.equal(preset.url, `https://github.com/dotnet/maui/tree/${branch}`);
+        assert.ok(preset.command.endsWith(`watch.mjs branch dotnet/maui ${branch}`));
+        assert.equal(preset.pollIntervalMs, 300_000);
+    }
+    assert.equal(presetFor("https://github.com/dotnet/maui/tree/net11.0/src", "darwin"), null);
 });
 
 test("each built-in watcher can use a per-watch check frequency without changing its command", () => {
@@ -138,6 +149,17 @@ test("branch polling only emits when the head changes", async () => {
     assert.equal(resets, 1);
 });
 
+test("branch watcher accepts slash refs without treating paths as shell commands", async () => {
+    const end = new Error("test complete");
+    await assert.rejects(watchBranch("dotnet/maui", "inflight/current", {
+        getCommit: async () => { throw end; },
+        report: () => {},
+    }), end);
+    await assert.rejects(watchBranch("dotnet/maui", "inflight/../../etc", {
+        report: () => {},
+    }), /valid owner\/repository and branch name/);
+});
+
 test("branch comparison errors remain visible in its change notification", async () => {
     const oldSha = "a".repeat(40);
     const newSha = "b".repeat(40);
@@ -180,6 +202,79 @@ test("branch check runs load every page, not just the first 100 checks", async (
     await assert.rejects(branchCheckRuns("dotnet/maui", head, async () =>
         [{ total_count: 3, check_runs: [{ id: 1 }, { id: 2 }] }], async () => {}),
     (error) => error.transient && /incomplete check runs/.test(error.message));
+});
+
+test("branch watches show the complete current GitHub panel, not historical check runs", async () => {
+    const head = "a".repeat(40);
+    const nodes = Array.from({ length: 240 }, (_, index) => ({
+        __typename: "CheckRun", id: `CR_${index}`, name: index === 0 ? "Build Analysis" : `maui-pr (job ${index})`,
+        status: index >= 237 ? "IN_PROGRESS" : "COMPLETED",
+        conclusion: index >= 237 ? null : index % 10 === 0 ? "FAILURE" : "SUCCESS",
+        detailsUrl: `https://github.com/dotnet/maui/actions/runs/${index}`,
+    }));
+    const cursors = [undefined, "MTAw", "MjAw"];
+    const seen = [];
+    const checks = await branchCurrentChecks("dotnet/maui", head, async (args) => {
+        assert.match(args[3], /statusCheckRollup/);
+        assert.ok(args.includes(`oid=${head}`));
+        const after = args.find((arg) => arg.startsWith("after="))?.slice(6);
+        seen.push(after);
+        const offset = cursors.indexOf(after) * 100;
+        return { data: { repository: { object: { statusCheckRollup: { contexts: {
+            totalCount: nodes.length,
+            pageInfo: { hasNextPage: offset + 100 < nodes.length, endCursor: cursors[offset / 100 + 1] },
+            nodes: nodes.slice(offset, offset + 100),
+        } } } } } };
+    });
+    assert.deepEqual(seen, cursors);
+    assert.equal(checks.length, 240);
+    assert.equal(checkStages(checks.map((check) => ({
+        name: check.name, state: check.status, bucket: check.conclusion, link: check.details_url,
+    }))).length, 240);
+    assert.equal(checks[0].name, "Build Analysis");
+    assert.equal(checks[237].status, "in_progress");
+    assert.equal(checks[237].conclusion, undefined);
+    assert.equal(branchChecksMessage("dotnet/maui", "main", head, checks), null);
+});
+
+test("GitHub status contexts, missing links, and changing pages retain honest states", async () => {
+    const head = "b".repeat(40);
+    const context = { __typename: "StatusContext", id: "SC_1", context: "Build",
+        state: "ERROR", targetUrl: "javascript:alert(1)" };
+    const check = { __typename: "CheckRun", id: "CR_1", name: "Tests",
+        status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: null };
+    let calls = 0;
+    const checks = await branchCurrentChecks("dotnet/maui", head, async () => {
+        calls++;
+        return { data: { repository: { object: { statusCheckRollup: { contexts: {
+            totalCount: calls === 1 ? 3 : 2,
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [context, check],
+        } } } } } };
+    });
+    assert.equal(calls, 2);
+    assert.deepEqual(checks.map(({ name, status, conclusion, details_url }) => [name, status, conclusion, details_url]), [
+        ["Build", "completed", "failure", `https://github.com/dotnet/maui/commit/${head}/checks`],
+        ["Tests", "completed", "success", `https://github.com/dotnet/maui/commit/${head}/checks`],
+    ]);
+    assert.match(branchChecksMessage("dotnet/maui", "main", head, checks), /1 passed, 1 failed or canceled/);
+    const pending = await branchCurrentChecks("dotnet/maui", head, async () => ({
+        data: { repository: { object: { statusCheckRollup: { contexts: {
+            totalCount: 1, pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [{ ...context, state: "PENDING", targetUrl: null }],
+        } } } } },
+    }));
+    assert.equal(pending[0].status, "pending");
+    assert.equal(branchChecksMessage("dotnet/maui", "main", head, pending), null);
+    assert.deepEqual(await branchCurrentChecks("dotnet/maui", head, async () => ({
+        data: { repository: { object: { statusCheckRollup: null } } },
+    })), []);
+    await assert.rejects(branchCurrentChecks("dotnet/maui", head, async () => ({
+        data: { repository: { object: { statusCheckRollup: { contexts: {
+            totalCount: 3, pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [context, check],
+        } } } } },
+    })), (error) => error.transient && /changed while loading/.test(error.message));
 });
 
 test("SSO-blocked branch requests fall back only to the public GitHub API", async () => {
