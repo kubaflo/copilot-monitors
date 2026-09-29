@@ -10,7 +10,7 @@ can work on something else or stay idle until there is a result. See the
 progress in a GitHub-themed canvas and optionally have the agent take the
 next step when a watch fires.
 
-![Live Watches and all 22 repositories tracked by the PR Dashboard](screenshots/live-watches-dotnet-ecosystem-dark.png)
+![Live Watches with actual public CI: an idle watch over failed checks and a running branch watch](screenshots/live-watches-overview-dark.png)
 
 ## Why watch instead of asking?
 
@@ -29,23 +29,26 @@ agent follow-ups can still use tokens. This is an alternative to AI-driven
 polling, not a claim that every watch has a fixed cost saving.
 
 <details>
-<summary>See the light theme, actual canvas, and check details</summary>
+<summary>See the light theme, full canvas, and check-level details</summary>
 
-![All 22 dashboard repositories alongside Live Watches in light mode](screenshots/live-watches-dotnet-ecosystem-light.png)
+![The same public CI snapshot in the light theme](screenshots/live-watches-overview-light.png)
 
-![Live Watches tracking dotnet/runtime, dotnet/maui, and dotnet/macios](screenshots/live-watches-dark.png)
+![Actual Live Watches canvas in dark mode with three public CI watches](screenshots/live-watches-canvas-dark.png)
 
-![Live Watches in the light theme](screenshots/live-watches-light.png)
+![Actual Live Watches canvas in light mode with three public CI watches](screenshots/live-watches-canvas-light.png)
 
-![Individual dotnet/maui CI checks, including a failure](screenshots/live-watches-ci-details.png)
+![Linked individual branch checks with the title and polling-frequency editor open](screenshots/live-watches-checks-and-settings.png)
 
 </details>
 
-The gallery pairs an actual Live Watches capture with **all 22 repositories**
-listed by the [PR Dashboard](https://danmoseley.github.io/pr-dashboard/index.html),
-including `microsoft/aspire`. The graphics illustrate targets, not 22
-simultaneously running watches. Public CI statuses were captured on
-September 27, 2026 and may have changed since.
+The graphics frame real captures of this session's Live Watches canvas, not
+mock CI or a claim that all example repositories are being watched. They show
+three public watches: completed checks on
+[dotnet/maui#38917](https://github.com/dotnet/maui/pull/38917), in-progress
+checks on the `dotnet/maui` `net11.0` branch, and
+[dotnet/runtime#134886](https://github.com/dotnet/runtime/pull/134886).
+Statuses were captured September 30, 2026 (CEST) and may have changed since. The
+light-theme capture uses the canvas's light color mode.
 
 ## Get started
 
@@ -57,18 +60,28 @@ September 27, 2026 and may have changed since.
 2. Open **Live Watches** and paste a supported link. The watch starts
    immediately, without an agent turn.
 3. Keep working, or leave the agent idle. Inspect progress in the canvas;
-   optionally set a follow-up for each completed PR or branch CI cycle. A
-   branch watch also posts its follow-up once if its current checks are already
-   complete when you configure it. PR watches stay active across pushes until
-   the PR closes or merges.
+   optionally set a follow-up for completed PR or branch CI cycles. On a
+   built-in branch watch with already-complete checks, adding a follow-up
+   queues it once for that current cycle; later completed cycles can trigger
+   it again. PR watches stay active across pushes until the PR closes or
+   merges.
 
 After a push, the next configured poll clears the previous commit's results
 and displays the new CI cycle (or pending inventory until its jobs appear).
 The canvas refreshes automatically; no manual watch restart is needed.
 Completed and stopped watches disappear from the canvas; watcher failures
 remain visible for diagnosis.
-Branch links display every check in GitHub's current commit checks panel,
-including job-level CI and other workflows, without older rerun records.
+Branch links use GitHub's **current status-check rollup** on the head commit:
+job-level CI and other current checks, without older rerun records. The title
+opens its configured destination, and group/check names link to the available
+CI results.
+
+The blue dot means the watcher is active with work pending; a muted gray dot
+means its known checks are finished and it is idle until its next poll, **even
+if CI failed**. Red signals a watcher error, not a failed CI job. The card
+distinguishes checking now, retrying, watching, and idle, and shows the next
+check time when applicable. The check bar and grouped counts distinguish
+passed, failed, canceled, skipped, running, and queued work.
 
 Alternatively, on macOS or Linux, install from a fresh clone:
 
@@ -94,10 +107,10 @@ Paste a link in the canvas for a ready-made watcher:
 
 | Target | Example |
 | --- | --- |
-| Pull request checks | `https://github.com/dotnet/runtime/pull/134750` |
-| Actions run | `https://github.com/dotnet/maui/actions/runs/123` |
+| Pull request checks | `https://github.com/dotnet/runtime/pull/134886` |
+| Actions run | `https://github.com/dotnet/runtime/actions/runs/36638671692` |
 | Branch commits and head CI | `https://github.com/dotnet/maui/tree/net11.0` |
-| Azure DevOps build | `https://dev.azure.com/dnceng-public/public/_build/results?buildId=123` |
+| Azure DevOps build | `https://dev.azure.com/dnceng-public/public/_build/results?buildId=1616959` |
 
 `#123` watches PR checks in the current repository. Direct branch links support
 one path segment. For anything else, ask the agent for a custom watch, such
@@ -116,14 +129,30 @@ includes a one-shot verification command and CI-only follow-up settings.
 To act when just `maui-pr` finishes, rather than waiting for UI and device
 tests, ask for `--notify-pipeline maui-pr` and a matching follow-up prefix.
 
-The canvas groups checks by pipeline, shows pending, passed, failed, skipped,
-and canceled results, and lets you rename watches, change the built-in
-polling frequency, or configure a follow-up prompt. Chat shows a compact
-monitor status and, when a follow-up runs, its custom prompt and the agent's
-answer instead of a raw watch notification. Cards start expanded
-and can be collapsed independently; the canvas follows the Copilot app theme.
-Custom continuous watches can limit follow-ups to matching stdout prefixes
-while reporting other events normally.
+The settings control edits the display title and a **running built-in**
+watch's polling frequency (30 seconds to 15 minutes) without restarting it.
+The initial frequency selector applies only to new watches. Cards start
+expanded and can be collapsed independently; the canvas follows the Copilot
+app theme. A completed one-shot watch or manually stopped watch disappears
+from the canvas automatically; a watcher failure remains visible for
+diagnosis. The agent can still inspect monitor output after a card disappears.
+
+For a fix → push → observe loop, set a bounded PR follow-up such as “If CI
+failed, fix it, validate, commit and push; stop when CI passes or after three
+attempts.” Each subsequent completed CI cycle can wake the agent again. A
+watch does **not** fix code, push, or start CI by itself: those steps depend on
+the user-configured prompt and the repository's normal CI trigger. Chat shows
+a compact monitor status and, when a follow-up runs, its custom prompt and the
+agent's answer rather than raw watch output.
+
+**Built-in links versus custom scripts:** The link presets provide the
+GitHub check rollup or Azure build timeline, default polling cadence, and
+clickable CI destinations. Built-in PR and branch watches also reset their
+checks on head changes and use the completion semantics described here. Agent-
+written shell watches report only what their scripts emit; their cadence
+cannot be edited in the canvas, and they do not automatically gain a check
+rollup or head-change handling. Custom continuous watches can limit follow-ups
+to matching stdout prefixes while reporting other events normally.
 Up to 30 watches can run in one session. See
 [`copilot-monitors/README.md`](copilot-monitors/README.md) for the complete
 behavior and limits.
