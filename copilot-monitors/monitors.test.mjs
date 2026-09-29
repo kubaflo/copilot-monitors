@@ -271,6 +271,75 @@ test("a running watch can add, edit, and remove its follow-up before an event", 
     await assert.rejects(async () => manager.setFollowUp(monitor.id, "Too late"), /Only running monitors/);
 });
 
+test("a completed branch posts its configured follow-up once, then again for the next CI cycle", async (t) => {
+    const { manager, messages } = fixture(t, { batchMs: 20 });
+    const source = [
+        `import { reportProgress } from ${JSON.stringify(new URL("./progress.mjs", import.meta.url).href)};`,
+        'const done = [{name:"Unit",state:"passed"},{name:"UI",state:"skipped"}];',
+        'reportProgress("waiting", 300_000, done);',
+        "await new Promise((resolve) => setTimeout(resolve, 100));",
+        'reportProgress("waiting", 300_000, done);',
+        "await new Promise((resolve) => setTimeout(resolve, 100));",
+        'process.stdout.write("branch moved\\n");',
+        'reportProgress("checking", undefined, []);',
+        'reportProgress("waiting", 300_000, [{name:"Unit",state:"running"}]);',
+        "await new Promise((resolve) => setTimeout(resolve, 100));",
+        'process.stdout.write("CI ended: new cycle complete.\\n");',
+        'reportProgress("waiting", 300_000, done);',
+        "await new Promise((resolve) => setTimeout(resolve, 30_000));",
+    ].join(" ");
+    const monitor = await manager.start({
+        description: "Branch dotnet/maui release/11.0.1xx-rc2",
+        command: `node --input-type=module -e ${JSON.stringify(source)}`,
+        url: "https://github.com/dotnet/maui/tree/release/11.0.1xx-rc2",
+        continuous: true, progress: true, followUpOnOutput: true,
+        followUpOnOutputPrefix: "CI ended:", followUpOnCurrentComplete: true,
+        followUpPrompt: "Trigger all tests",
+    });
+    await until(() => messages.length >= 3);
+    assert.equal(messages.length, 3);
+    assert.equal(messages[0].source, "system");
+    assert.equal(messages[0].displayPrompt,
+        "Monitor: Branch dotnet/maui release/11.0.1xx-rc2 CI finished.\nCustom prompt: Trigger all tests");
+    assert.match(messages[0].prompt, /2 current checks have completed/);
+    assert.equal(messages[1].source, undefined);
+    assert.match(messages[1].prompt, /branch moved/);
+    assert.doesNotMatch(messages[1].prompt, /User-configured follow-up/);
+    assert.equal(messages[2].source, "system");
+    assert.match(messages[2].prompt, /CI ended: new cycle complete/);
+    assert.equal(manager.list()[0].notifications, 3);
+    manager.stop(monitor.id);
+});
+
+test("adding a follow-up to already completed CI posts once, not on every save or quiet poll", async (t) => {
+    const { manager, messages } = fixture(t, { batchMs: 20 });
+    const source = [
+        `import { reportProgress } from ${JSON.stringify(new URL("./progress.mjs", import.meta.url).href)};`,
+        'reportProgress("waiting", 300_000, [{name:"Unit",state:"passed"},{name:"UI",state:"skipped"}]);',
+        "await new Promise((resolve) => setTimeout(resolve, 100));",
+        'reportProgress("waiting", 300_000, [{name:"Unit",state:"passed"},{name:"UI",state:"skipped"}]);',
+        "await new Promise((resolve) => setTimeout(resolve, 30_000));",
+    ].join(" ");
+    const monitor = await manager.start({
+        description: "Release", command: `node --input-type=module -e ${JSON.stringify(source)}`,
+        continuous: true, progress: true, followUpOnOutput: true,
+        followUpOnOutputPrefix: "CI ended:", followUpOnCurrentComplete: true,
+    });
+    await until(() => manager.list()[0].phase === "waiting");
+    assert.deepEqual(messages, []);
+    assert.equal(manager.setFollowUp(monitor.id, "Trigger all tests").followUpQueued, true);
+    await until(() => messages.length === 1);
+    assert.equal(messages[0].source, "system");
+    assert.match(messages[0].prompt, /2 current checks have completed/);
+    assert.equal(manager.setFollowUp(monitor.id, "Trigger all tests").followUpQueued, false);
+    assert.equal(manager.setFollowUp(monitor.id, "Clarify which tests").followUpQueued, false);
+    assert.equal(manager.setFollowUp(monitor.id, "").followUpQueued, false);
+    assert.equal(manager.setFollowUp(monitor.id, "Trigger all tests").followUpQueued, false);
+    await until(() => manager.list()[0].checks === 2);
+    assert.equal(messages.length, 1);
+    manager.stop(monitor.id);
+});
+
 test("renaming a watch updates its card title and later notifications", async (t) => {
     const { manager, messages } = fixture(t, { batchMs: 20 });
     const monitor = await manager.start({

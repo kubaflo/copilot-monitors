@@ -34,6 +34,8 @@ test("branch links create continuous watchers without a deadline", () => {
     assert.equal(preset.continuous, true);
     assert.equal(preset.progress, true);
     assert.equal(preset.followUpOnOutput, true);
+    assert.equal(preset.followUpOnOutputPrefix, "CI ended:");
+    assert.equal(preset.followUpOnCurrentComplete, true);
     assert.equal(preset.timeoutMinutes, undefined);
     assert.equal(preset.pollIntervalMs, 300_000);
     assert.equal(preset.url, "https://github.com/dotnet/maui/tree/net11.0");

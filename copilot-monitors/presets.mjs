@@ -25,7 +25,8 @@ function preset(description, defaultTitle, args, platform, intervalSeconds, url)
         continuous: true,
         progress: true,
         followUpOnOutput: args[0] === "branch" || args[0] === "pr",
-        ...(args[0] === "pr" && { followUpOnOutputPrefix: "CI ended:" }),
+        ...(["branch", "pr"].includes(args[0]) && { followUpOnOutputPrefix: "CI ended:" }),
+        ...(args[0] === "branch" && { followUpOnCurrentComplete: true }),
         pollIntervalMs: intervalSeconds === undefined
             ? args[0] === "branch" ? BRANCH_INTERVAL_MS : CI_INTERVAL_MS
             : intervalSeconds * 1_000,

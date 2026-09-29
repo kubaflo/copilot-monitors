@@ -355,6 +355,33 @@ test("saving an unchanged follow-up leaves Remove usable and removal updates the
     }
 });
 
+test("saving a follow-up on completed branch checks confirms the immediate queue", async () => {
+    const monitor = {
+        id: "d0000003", description: "Branch dotnet/maui release/11.0.1xx-rc2",
+        status: "running", phase: "waiting", stages: [stage("maui-pr", "passed")],
+        pollIntervalMs: 300_000, followUpPrompt: null, output: "", stderr: "",
+    };
+    const originalFetch = context.fetch;
+    context.fetch = async (url, options) => {
+        if (url.pathname.endsWith("/follow-up")) {
+            monitor.followUpPrompt = JSON.parse(options.body).followUpPrompt;
+            return { ok: true, json: async () => ({ monitor: { ...monitor, followUpQueued: true } }) };
+        }
+        return { ok: true, json: async () => ({ monitors: [monitor], ask: null }) };
+    };
+    try {
+        const editor = watchBody(context.renderCard(monitor))
+            .children.find((child) => child.className?.includes("follow-up-settings"));
+        const form = editor.children[1];
+        form.children[1].value = "Trigger all tests";
+        await form.listeners.submit({ preventDefault() {} });
+        assert.equal(elements.get("status").children[0].textContent, "Follow-up queued for completed CI.");
+    } finally {
+        context.fetch = originalFetch;
+        await context.refreshWatches();
+    }
+});
+
 test("a failed follow-up removal keeps Remove usable and shows the error", async () => {
     const monitor = {
         id: "d0000002", description: "Branch dotnet/maui net11.0", status: "running",

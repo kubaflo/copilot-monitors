@@ -273,7 +273,9 @@ function followUpView(monitor) {
             }
             followUpDrafts.delete(monitor.id);
             textarea.value = updated.followUpPrompt ?? "";
-            show(prompt ? "Follow-up prompt saved. The agent will respond when this watch fires." : "Follow-up prompt removed.");
+            if (!prompt) show("Follow-up prompt removed.");
+            else if (updated.followUpQueued) show("Follow-up queued for completed CI.");
+            else show("Follow-up prompt saved. The agent will respond when this watch fires.");
             await refresh();
         } catch (error) {
             show(error.message, true);

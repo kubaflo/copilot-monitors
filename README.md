@@ -57,8 +57,10 @@ September 27, 2026 and may have changed since.
 2. Open **Live Watches** and paste a supported link. The watch starts
    immediately, without an agent turn.
 3. Keep working, or leave the agent idle. Inspect progress in the canvas;
-   optionally set a follow-up for each completed PR CI cycle. PR watches stay
-   active across pushes until the PR closes or merges.
+   optionally set a follow-up for each completed PR or branch CI cycle. A
+   branch watch also posts its follow-up once if its current checks are already
+   complete when you configure it. PR watches stay active across pushes until
+   the PR closes or merges.
 
 After a push, the next configured poll clears the previous commit's results
 and displays the new CI cycle (or pending inventory until its jobs appear).

@@ -16,6 +16,7 @@ const MAX_PROGRESS_CHARS = 1_000_000;
 const NOISE_LIMIT = 10;
 const NOISE_WINDOW_MINUTES = 5;
 const STAGE_STATES = new Set(["queued", "running", "passed", "failed", "canceled", "skipped", "warning", "unknown"]);
+const FINISHED_STATES = new Set(["passed", "failed", "canceled", "skipped", "warning"]);
 
 // Kills the monitor's process group if the extension dies without cleaning up.
 const POSIX_WRAPPER = [
@@ -102,7 +103,9 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
     }
 
     function deliver(monitor, notification) {
+        if (monitor.followUpOnCurrentComplete && notification.followUp && monitor.completedFollowUpDelivered) return;
         if (notification.followUp) monitor.followUpDelivered = true;
+        if (monitor.followUpOnCurrentComplete && notification.followUp) monitor.completedFollowUpDelivered = true;
         monitor.notifications += 1;
         monitor.delivery = monitor.delivery
             .then(() => send({
@@ -112,6 +115,17 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             }))
             .catch((error) => Promise.resolve(log(`Monitor "${monitor.description}" could not notify the agent: ${error.message}`))
                 .catch(() => {}));
+    }
+
+    function followUpForCompletedChecks(monitor) {
+        if (!monitor.followUpOnCurrentComplete || !monitor.followUpPrompt
+            || monitor.completedFollowUpDelivered
+            || monitor.phase !== "waiting" || !monitor.stages?.length
+            || !monitor.stages.every((stage) => FINISHED_STATES.has(stage.state))
+            || monitor.pending.some((line) => line.startsWith(monitor.followUpOnOutputPrefix))) return false;
+        const line = `CI ended: ${monitor.stages.length} current checks have completed. ${monitor.url ?? ""}`.trim();
+        deliver(monitor, message(monitor, null, [line], 0));
+        return true;
     }
 
     function message(monitor, ending, lines, omittedEarlier) {
@@ -279,9 +293,13 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             return false;
         }
         const now = Date.now();
+        const firstInventory = monitor.stages === null;
         monitor.phase = phase;
         if (stages !== undefined) {
             monitor.stages = stages.map(({ name, state, detail, group, url }) => ({ name, state, detail, group, url }));
+            if (!stages.length || stages.some((stage) => !FINISHED_STATES.has(stage.state))) {
+                monitor.completedFollowUpDelivered = false;
+            }
         }
         monitor.nextCheckAt = ["waiting", "retrying"].includes(phase) ? new Date(now + intervalMs).toISOString() : null;
         if (phase !== "checking") {
@@ -289,6 +307,7 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             monitor.lastAttemptAt = new Date(now).toISOString();
             if (phase !== "retrying") monitor.lastCheckedAt = monitor.lastAttemptAt;
         }
+        if (firstInventory && phase === "waiting") followUpForCompletedChecks(monitor);
         return true;
     }
 
@@ -325,6 +344,12 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             || !followUpOnOutputPrefix.trim() || followUpOnOutputPrefix.length > 100 || /[\r\n]/.test(followUpOnOutputPrefix))) {
             throw new MonitorInputError("followUpOnOutputPrefix requires followUpOnOutput and a nonempty single-line prefix of at most 100 characters.");
         }
+        const followUpOnCurrentComplete = input?.followUpOnCurrentComplete ?? false;
+        if (typeof followUpOnCurrentComplete !== "boolean"
+            || (followUpOnCurrentComplete && (!continuous || !progress || !followUpOnOutput
+                || followUpOnOutputPrefix !== "CI ended:"))) {
+            throw new MonitorInputError("followUpOnCurrentComplete requires a continuous progress watch with CI ended: follow-ups.");
+        }
         const timeoutMinutes = input?.timeoutMinutes ?? 30;
         if (!Number.isInteger(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 240) {
             throw new MonitorInputError("timeoutMinutes must be an integer from 1 to 240.");
@@ -347,13 +372,14 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         const startedAt = new Date();
         const monitor = {
             id: randomUUID().slice(0, 8), description, defaultTitle, title: null, command, url, timeoutMinutes, continuous, progress, pollIntervalMs,
-            followUpPrompt, followUpOnOutput, followUpOnOutputPrefix, child,
+            followUpPrompt, followUpOnOutput, followUpOnOutputPrefix, followUpOnCurrentComplete, child,
             status: "running", exitCode: null, error: null,
             startedAt: startedAt.toISOString(), endedAt: null,
             deadline: continuous ? null : new Date(startedAt.getTime() + timeoutMinutes * minuteMs).toISOString(),
             phase: null, checks: 0, lastCheckedAt: null, lastAttemptAt: null, nextCheckAt: null,
             stages: null,
-            lines: [], pending: [], pendingOmitted: 0, stderr: [], recent: [], notifications: 0, followUpDelivered: false,
+            lines: [], pending: [], pendingOmitted: 0, stderr: [], recent: [], notifications: 0,
+            followUpDelivered: false, completedFollowUpDelivered: false,
             batchTimer: null, deadlineTimer: null, frequencyChange: null, delivery: Promise.resolve(),
         };
         monitors.set(monitor.id, monitor);
@@ -394,8 +420,13 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
     function setFollowUp(id, prompt) {
         const monitor = get(id);
         if (monitor.status !== "running") throw new MonitorInputError("Only running monitors can change their follow-up prompt.");
-        monitor.followUpPrompt = normalizeFollowUpPrompt(prompt);
-        return summary(monitor);
+        const updated = normalizeFollowUpPrompt(prompt);
+        let followUpQueued = false;
+        if (updated !== monitor.followUpPrompt) {
+            monitor.followUpPrompt = updated;
+            followUpQueued = followUpForCompletedChecks(monitor);
+        }
+        return { ...summary(monitor), followUpQueued };
     }
 
     function setTitle(id, title) {

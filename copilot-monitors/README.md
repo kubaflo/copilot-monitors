@@ -69,7 +69,11 @@ each job and its step count; PR links show all checks, grouped by workflow.
 Progress updates do not wake the agent. Built-in link watches run until they
 complete or you stop them, without a deadline.
 Choose a check frequency for new watches or leave it on Auto. You can attach
-a follow-up prompt to run only when the watch finishes or a new commit arrives.
+a follow-up prompt to run when a watch or CI cycle finishes.
+For a built-in branch watch, a follow-up runs once for already-completed checks
+when configured, then once for each subsequent completed CI cycle. Saving
+the same prompt again or polling an unchanged completed cycle does not repost
+it. Branch-head changes still alert but do not run that follow-up.
 Chat shows a short `Monitor: <name> <status>.` label instead of the raw
 watch notification; when a follow-up runs, it also shows
 `Custom prompt: <prompt>` above the agent's answer. The complete event output
