@@ -58,8 +58,10 @@ queued checks remain unfilled.
 The title dot is blue while CI is pending, muted gray when every known CI
 check is finished and the continuous watch is idle until its next poll, or red
 for a watcher error. An idle watch still shows its next check time and Stop
-control. Finished watches have no dot. Failed CI checks appear in the check
-counts, not as a watcher error.
+control. Failed CI checks appear in the check
+counts, not as a watcher error. Completed and manually stopped watches
+disappear from the canvas automatically; watcher failures remain visible
+for diagnosis. Their monitor output is still available to the agent.
 Azure DevOps stages show completed/running job counts; GitHub Actions shows
 each job and its step count; PR links show all checks, grouped by workflow.
 Progress updates do not wake the agent. Built-in link watches run until they

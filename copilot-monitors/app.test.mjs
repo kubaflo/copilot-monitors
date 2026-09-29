@@ -89,6 +89,45 @@ test("empty watch list hides its heading and duplicate prompt", async () => {
     assert.equal(elements.get("monitors").children.length, 0);
 });
 
+test("stopped and completed watches disappear while active watches and errors remain", async () => {
+    const originalFetch = context.fetch;
+    const running = { id: "running", description: "MAUI main", status: "running" };
+    const stopped = { id: "stopped", description: "Internal build", status: "stopped" };
+    const finished = { id: "finished", description: "maui-pr build", status: "exited" };
+    const failed = { id: "failed", description: "Broken watcher", status: "failed" };
+    try {
+        context.fetch = async () => ({ ok: true, json: async () => ({
+            monitors: [stopped, running, finished, failed], ask: null,
+        }) });
+        await context.refreshWatches();
+        assert.deepEqual(Array.from(elements.get("monitors").children, watchTitle).map((title) => title.textContent),
+            ["MAUI main", "Broken watcher"]);
+        assert.equal(elements.get("active-count").textContent, "1 active");
+        assert.equal(elements.get("watch-toolbar").hidden, false);
+        assert.equal(elements.get("clear").hidden, false);
+
+        context.fetch = async () => ({ ok: true, json: async () => ({
+            monitors: [stopped, running, finished], ask: null,
+        }) });
+        await context.refreshWatches();
+        assert.deepEqual(Array.from(elements.get("monitors").children, watchTitle).map((title) => title.textContent),
+            ["MAUI main"]);
+        assert.equal(elements.get("clear").hidden, true);
+
+        context.fetch = async () => ({ ok: true, json: async () => ({
+            monitors: [stopped, finished], ask: null,
+        }) });
+        await context.refreshWatches();
+        assert.equal(elements.get("monitors").children.length, 0);
+        assert.equal(elements.get("watch-toolbar").hidden, true);
+        assert.equal(elements.get("clear").hidden, true);
+        assert.equal(elements.get("active-count").textContent, "0 active");
+    } finally {
+        context.fetch = originalFetch;
+        await context.refreshWatches();
+    }
+});
+
 test("watch settings show the custom title and current built-in interval", () => {
     const monitor = { id: "abc12345", description: "Branch dotnet/maui net11.0",
         defaultTitle: "net11.0 · dotnet/maui", title: "Net 11 CI",

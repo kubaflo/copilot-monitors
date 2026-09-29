@@ -494,11 +494,12 @@ function card(monitor) {
 async function refresh() {
     try {
         const { monitors, ask } = await request("api/monitors");
+        const visible = monitors.filter((monitor) => !["exited", "stopped"].includes(monitor.status));
         showAsk(ask);
-        activeCount.textContent = `${monitors.filter((monitor) => monitor.status === "running").length} active`;
-        toolbar.hidden = monitors.length === 0;
-        clear.hidden = !monitors.some((monitor) => monitor.status !== "running");
-        const snapshot = JSON.stringify(monitors);
+        activeCount.textContent = `${visible.filter((monitor) => monitor.status === "running").length} active`;
+        toolbar.hidden = visible.length === 0;
+        clear.hidden = !visible.some((monitor) => monitor.status !== "running");
+        const snapshot = JSON.stringify(visible);
         if (snapshot !== lastMonitors) {
             const scrolls = new Map([...list.querySelectorAll(".stage-list")].map((rows) => [rows.dataset.monitorId, rows.scrollTop]));
             const focused = document.activeElement;
@@ -506,8 +507,8 @@ async function refresh() {
             const editor = editing && ["INPUT", "SELECT", "TEXTAREA"].includes(focused.tagName)
                 ? { id: focused.id, start: focused.selectionStart, end: focused.selectionEnd }
                 : null;
-            list.replaceChildren(...(monitors.length
-                ? monitors.slice().reverse().sort((a, b) => Number(b.status === "running") - Number(a.status === "running")).map(card)
+            list.replaceChildren(...(visible.length
+                ? visible.slice().reverse().sort((a, b) => Number(b.status === "running") - Number(a.status === "running")).map(card)
                 : []));
             for (const rows of list.querySelectorAll(".stage-list")) {
                 rows.scrollTop = scrolls.get(rows.dataset.monitorId) ?? 0;

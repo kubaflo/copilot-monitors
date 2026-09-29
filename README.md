@@ -63,6 +63,8 @@ September 27, 2026 and may have changed since.
 After a push, the next configured poll clears the previous commit's results
 and displays the new CI cycle (or pending inventory until its jobs appear).
 The canvas refreshes automatically; no manual watch restart is needed.
+Completed and stopped watches disappear from the canvas; watcher failures
+remain visible for diagnosis.
 
 Alternatively, on macOS or Linux, install from a fresh clone:
 
