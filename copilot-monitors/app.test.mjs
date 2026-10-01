@@ -403,6 +403,37 @@ test("a failed follow-up removal keeps Remove usable and shows the error", async
     }
 });
 
+test("failed follow-up delivery preserves the edited draft across refreshed cards", async () => {
+    const monitor = {
+        id: "d0000004", description: "Custom Azure CI", status: "running", phase: "waiting",
+        followUpPrompt: "Original prompt", stages: [stage("maui-pr", "failed")],
+    };
+    const originalFetch = context.fetch;
+    context.fetch = async (url, options) => {
+        if (url.pathname.endsWith("/follow-up")) {
+            monitor.followUpPrompt = JSON.parse(options.body).followUpPrompt;
+            return { ok: false, status: 500, json: async () => ({ error: "Agent delivery failed" }) };
+        }
+        return { ok: true, json: async () => ({ monitors: [monitor], ask: null }) };
+    };
+    try {
+        const editor = watchBody(context.renderCard(monitor))
+            .children.find((child) => child.className?.includes("follow-up-settings"));
+        const form = editor.children[1];
+        form.children[1].value = "  Edited prompt  ";
+        await form.listeners.submit({ preventDefault() {} });
+        assert.equal(elements.get("status").children[0].textContent, "Agent delivery failed");
+        assert.equal(form.children[2].children[0].disabled, false);
+        await context.refreshWatches();
+        const refreshed = watchBody(elements.get("monitors").children[0])
+            .children.find((child) => child.className?.includes("follow-up-settings"));
+        assert.equal(refreshed.children[1].children[1].value, "  Edited prompt  ");
+    } finally {
+        context.fetch = originalFetch;
+        await context.refreshWatches();
+    }
+});
+
 test("pipeline counts distinguish passed checks from finished and failed checks", () => {
     const checks = [
         ...Array.from({ length: 5 }, (_, index) => stage("maui-pr-devicetests", "passed", `pass-${index}`)),

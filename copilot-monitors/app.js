@@ -263,6 +263,7 @@ function followUpView(monitor) {
     let saving = false;
     const submit = async (prompt) => {
         if (saving) return;
+        followUpDrafts.set(monitor.id, textarea.value);
         saving = true;
         save.disabled = true;
         if (remove) remove.disabled = true;

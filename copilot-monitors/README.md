@@ -70,10 +70,19 @@ Progress updates do not wake the agent. Built-in link watches run until they
 complete or you stop them, without a deadline.
 Choose a check frequency for new watches or leave it on Auto. You can attach
 a follow-up prompt to run when a watch or CI cycle finishes.
-For a built-in branch watch, a follow-up runs once for already-completed checks
-when configured, then once for each subsequent completed CI cycle. Saving
-the same prompt again or polling an unchanged completed cycle does not repost
-it. Branch-head changes still alert but do not run that follow-up.
+For a continuous progress watch with output follow-ups, **Save** queues the
+prompt immediately if every current check is terminal, including failed or
+canceled CI. This works for custom watchers even if their initial completed
+cycle emitted no stdout and the saved prompt is unchanged from startup.
+The agent receives the actual job results and overall result counts, not an
+assumed successful outcome. Saving the same delivered prompt again, repeated
+completion events, or polling unchanged results does not repost it. A changed
+prompt or a new CI cycle is eligible again. Empty prompts, pending/unknown
+checks, missing job inventory, retrying/error states, and stopped watches do
+not trigger this path. Save reports delivery errors and retains the draft so
+it can be retried. Built-in branch watches also queue their configured prompt
+automatically for initially completed checks. Branch-head changes still alert
+but do not run that follow-up.
 Chat shows a short `Monitor: <name> <status>.` label instead of the raw
 watch notification; when a follow-up runs, it also shows
 `Custom prompt: <prompt>` above the agent's answer. The complete event output
@@ -161,8 +170,10 @@ and `followUpOnOutputPrefix: "Azure branch CI finished:"`. To act as soon as
 finishes; use the common `"Azure branch CI finished:"` prefix for all of them.
 The other pipelines remain visible in progress but do not delay notifications.
 Branch-head changes and access errors remain ordinary alerts. A completed
-build already present on the first poll is shown without an initial follow-up;
-start the watch before pushing or inspect the existing result yourself.
+build already present on the first poll is shown without an initial follow-up.
+To act on an already-completed current cycle, save its follow-up in the canvas
+(or invoke `set_follow_up`) once all displayed jobs are terminal. Future live
+completion events still obey the configured per-pipeline stdout prefix.
 The example requires public
 `dnceng-public/public` builds and GitHub CLI authentication.
 

@@ -102,39 +102,109 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         return monitor;
     }
 
-    function deliver(monitor, notification) {
-        if (monitor.followUpOnCurrentComplete && notification.followUp && monitor.completedFollowUpDelivered) return;
-        if (notification.followUp) monitor.followUpDelivered = true;
-        if (monitor.followUpOnCurrentComplete && notification.followUp) monitor.completedFollowUpDelivered = true;
-        monitor.notifications += 1;
-        monitor.delivery = monitor.delivery
-            .then(() => send({
+    function completedCycle(monitor) {
+        if (monitor.status !== "running" || monitor.error
+            || !["waiting", "complete"].includes(monitor.phase) || !monitor.stages?.length
+            || !monitor.stages.every((stage) => FINISHED_STATES.has(stage.state)
+                && !stage.group?.endsWith("pending job inventory"))) return null;
+        return JSON.stringify(monitor.stages.map(({ name, group, url, state }) => [name, group, url, state])
+            .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
+    }
+
+    function deliver(monitor, notification, rateLimited = false) {
+        if (rateLimited && monitor.status !== "running") return Promise.resolve(false);
+        const cycle = completedCycle(monitor);
+        const scoped = notification.followUp && monitor.continuous && monitor.progress
+            && (notification.completedSnapshot || notification.lines.some((line) =>
+                line.startsWith("CI ended:") || line.startsWith("Azure branch CI finished:")));
+        const prompt = notification.followUpPrompt;
+        const completedKey = scoped && cycle ? JSON.stringify([monitor.cycle, cycle, prompt]) : null;
+        const key = notification.completedSnapshot ? completedKey
+            : scoped ? JSON.stringify([monitor.cycle, monitor.stages?.map(({ name, group, url }) =>
+                [name, group, url]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+            [...new Set(notification.lines)].sort(), prompt]) : null;
+        // A saved snapshot covers the whole cycle; live pipeline events otherwise stay distinct.
+        if (completedKey && !notification.completedSnapshot
+            && (monitor.snapshots.has(completedKey)
+                || (monitor.followUpOnCurrentComplete && monitor.delivered.has(completedKey)))) {
+            return Promise.resolve(false);
+        }
+        if (key && monitor.delivered.has(key)) return Promise.resolve(false);
+        if (key && monitor.delivering.has(key)) return monitor.delivering.get(key);
+        if (completedKey && monitor.deliveringSnapshots.has(completedKey)) {
+            return monitor.delivering.get(completedKey);
+        }
+        if (rateLimited) {
+            const now = Date.now();
+            monitor.recent = monitor.recent.filter((time) => now - time < NOISE_WINDOW_MINUTES * minuteMs);
+            if (monitor.recent.length >= NOISE_LIMIT) {
+                monitor.pending.push(...notification.lines);
+                finish(monitor, "noisy");
+                return Promise.resolve(false);
+            }
+            monitor.recent.push(now);
+        }
+        const delivered = monitor.delivered;
+        const delivering = monitor.delivering;
+        const snapshots = monitor.snapshots;
+        const deliveringSnapshots = monitor.deliveringSnapshots;
+        if (notification.followUp) monitor.followUpPending += 1;
+        const delivery = monitor.delivery.then(async () => {
+            if (notification.completedSnapshot && monitor.status !== "running") {
+                throw new MonitorInputError("Monitor stopped before its follow-up could be delivered.");
+            }
+            await send({
                 prompt: notification.prompt,
                 displayPrompt: notification.displayPrompt,
                 ...(notification.followUp ? { source: "system" } : {}),
-            }))
-            .catch((error) => Promise.resolve(log(`Monitor "${monitor.description}" could not notify the agent: ${error.message}`))
-                .catch(() => {}));
+            });
+            monitor.notifications += 1;
+            if (notification.followUp) monitor.followUpDelivered = true;
+            if (key) delivered.add(key);
+            if (completedKey) delivered.add(completedKey);
+            if (notification.completedSnapshot) snapshots.add(completedKey);
+            return true;
+        }).finally(() => {
+            if (notification.followUp) monitor.followUpPending -= 1;
+            if (key) delivering.delete(key);
+            if (completedKey && delivering.get(completedKey) === delivery) delivering.delete(completedKey);
+            if (notification.completedSnapshot) deliveringSnapshots.delete(completedKey);
+        });
+        if (key) delivering.set(key, delivery);
+        if (completedKey && !delivering.has(completedKey)) delivering.set(completedKey, delivery);
+        if (notification.completedSnapshot) deliveringSnapshots.add(completedKey);
+        monitor.delivery = delivery.catch(async (error) => {
+            try {
+                await log(`Monitor "${monitor.description}" could not notify the agent: ${error.message}`);
+            } catch (logError) {
+                process.stderr.write(`Monitor notification logging failed: ${logError.message}\n`);
+            }
+        });
+        return delivery;
     }
 
     function followUpForCompletedChecks(monitor) {
-        if (!monitor.followUpOnCurrentComplete || !monitor.followUpPrompt
-            || monitor.completedFollowUpDelivered
-            || monitor.phase !== "waiting" || !monitor.stages?.length
-            || !monitor.stages.every((stage) => FINISHED_STATES.has(stage.state))
-            || monitor.pending.some((line) => line.startsWith(monitor.followUpOnOutputPrefix))) return false;
+        if (!monitor.continuous || !monitor.progress || !monitor.followUpOnOutput || !monitor.followUpPrompt
+            || !completedCycle(monitor)) return Promise.resolve(false);
         const line = `CI ended: ${monitor.stages.length} current checks have completed. ${monitor.url ?? ""}`.trim();
-        deliver(monitor, message(monitor, null, [line], 0));
-        return true;
+        const stages = monitor.stages.map((stage) =>
+            `${stage.group ? `${stage.group} / ` : ""}${stage.name}: ${stage.state}`
+            + `${stage.detail ? `; ${stage.detail}` : ""}${stage.url ? `; ${stage.url}` : ""}`);
+        const counts = [...FINISHED_STATES].map((state) =>
+            `${monitor.stages.filter((stage) => stage.state === state).length} ${state}`).join(", ");
+        return deliver(monitor, {
+            ...message(monitor, null, [...stages, `${line} Results: ${counts}.`], 0, true),
+            completedSnapshot: true,
+        });
     }
 
-    function message(monitor, ending, lines, omittedEarlier) {
+    function message(monitor, ending, lines, omittedEarlier, completedSnapshot = false) {
         const kept = lines.slice(-MAX_MESSAGE_LINES);
         const omitted = omittedEarlier + lines.length - kept.length;
-        const runFollowUp = Boolean(monitor.followUpPrompt && (monitor.followUpOnOutput
+        const runFollowUp = Boolean(monitor.followUpPrompt && (completedSnapshot || (monitor.followUpOnOutput
             ? lines.some((line) => !monitor.followUpOnOutputPrefix || line.startsWith(monitor.followUpOnOutputPrefix))
                 && (ending === null || ending === "exited" || (ending === "failed" && !monitor.error))
-            : ending === "exited" || (ending === "failed" && !monitor.error)));
+            : ending === "exited" || (ending === "failed" && !monitor.error))));
         const endings = {
             exited: "exited with code 0",
             failed: `failed (${monitor.error ?? `exit ${monitor.exitCode}`})`,
@@ -167,7 +237,8 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         const name = (monitor.title ?? monitor.defaultTitle ?? monitor.description).replace(/\s+/g, " ");
         const displayPrompt = `Monitor: ${name} ${event}.`
             + (runFollowUp ? `\nCustom prompt: ${monitor.followUpPrompt}` : "");
-        return { prompt: parts.join("\n"), displayPrompt, followUp: runFollowUp };
+        return { prompt: parts.join("\n"), displayPrompt, followUp: runFollowUp,
+            followUpPrompt: monitor.followUpPrompt, lines };
     }
 
     function pendingMessages(monitor, ending) {
@@ -220,8 +291,8 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         if (status === "stopped") {
             monitor.pending = [];
         } else if (!(status === "exited" && monitor.followUpPrompt && monitor.followUpOnOutput
-            && monitor.followUpDelivered && !monitor.pending.length)) {
-            for (const notification of pendingMessages(monitor, status)) deliver(monitor, notification);
+            && (monitor.followUpDelivered || monitor.followUpPending) && !monitor.pending.length)) {
+            for (const notification of pendingMessages(monitor, status)) deliver(monitor, notification).catch(() => {});
         }
     }
 
@@ -229,17 +300,7 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         monitor.batchTimer = null;
         if (monitor.status !== "running" || !monitor.pending.length) return;
         if (monitor.followUpPrompt && !monitor.followUpOnOutput) return;
-        const now = Date.now();
-        monitor.recent = monitor.recent.filter((time) => now - time < NOISE_WINDOW_MINUTES * minuteMs);
-        const prefix = monitor.followUpPrompt && monitor.followUpOnOutputPrefix;
-        const messages = prefix && monitor.pending.some((line) => line.startsWith(prefix))
-            && monitor.pending.some((line) => !line.startsWith(prefix)) ? 2 : 1;
-        if (monitor.recent.length + messages > NOISE_LIMIT) {
-            finish(monitor, "noisy");
-            return;
-        }
-        monitor.recent.push(...Array(messages).fill(now));
-        for (const notification of pendingMessages(monitor, null)) deliver(monitor, notification);
+        for (const notification of pendingMessages(monitor, null)) deliver(monitor, notification, true).catch(() => {});
     }
 
     function settleFrequency(monitor, error) {
@@ -294,11 +355,19 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         }
         const now = Date.now();
         const firstInventory = monitor.stages === null;
+        const wasComplete = monitor.stages?.length
+            && monitor.stages.every((stage) => FINISHED_STATES.has(stage.state));
+        const hadInventory = Boolean(monitor.stages?.length);
         monitor.phase = phase;
         if (stages !== undefined) {
             monitor.stages = stages.map(({ name, state, detail, group, url }) => ({ name, state, detail, group, url }));
-            if (!stages.length || stages.some((stage) => !FINISHED_STATES.has(stage.state))) {
-                monitor.completedFollowUpDelivered = false;
+            if ((wasComplete && stages.some((stage) => !FINISHED_STATES.has(stage.state)))
+                || (!stages.length && hadInventory)) {
+                monitor.cycle += 1;
+                monitor.delivered = new Set();
+                monitor.delivering = new Map();
+                monitor.snapshots = new Set();
+                monitor.deliveringSnapshots = new Set();
             }
         }
         monitor.nextCheckAt = ["waiting", "retrying"].includes(phase) ? new Date(now + intervalMs).toISOString() : null;
@@ -307,7 +376,9 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             monitor.lastAttemptAt = new Date(now).toISOString();
             if (phase !== "retrying") monitor.lastCheckedAt = monitor.lastAttemptAt;
         }
-        if (firstInventory && phase === "waiting") followUpForCompletedChecks(monitor);
+        if (firstInventory && phase === "waiting" && monitor.followUpOnCurrentComplete) {
+            followUpForCompletedChecks(monitor).catch(() => {});
+        }
         return true;
     }
 
@@ -379,7 +450,8 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             phase: null, checks: 0, lastCheckedAt: null, lastAttemptAt: null, nextCheckAt: null,
             stages: null,
             lines: [], pending: [], pendingOmitted: 0, stderr: [], recent: [], notifications: 0,
-            followUpDelivered: false, completedFollowUpDelivered: false,
+            followUpDelivered: false, followUpPending: 0, cycle: 0, delivered: new Set(), delivering: new Map(),
+            snapshots: new Set(), deliveringSnapshots: new Set(),
             batchTimer: null, deadlineTimer: null, frequencyChange: null, delivery: Promise.resolve(),
         };
         monitors.set(monitor.id, monitor);
@@ -417,15 +489,12 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         return summary(monitor);
     }
 
-    function setFollowUp(id, prompt) {
+    async function setFollowUp(id, prompt) {
         const monitor = get(id);
         if (monitor.status !== "running") throw new MonitorInputError("Only running monitors can change their follow-up prompt.");
         const updated = normalizeFollowUpPrompt(prompt);
-        let followUpQueued = false;
-        if (updated !== monitor.followUpPrompt) {
-            monitor.followUpPrompt = updated;
-            followUpQueued = followUpForCompletedChecks(monitor);
-        }
+        monitor.followUpPrompt = updated;
+        const followUpQueued = await followUpForCompletedChecks(monitor);
         return { ...summary(monitor), followUpQueued };
     }
 

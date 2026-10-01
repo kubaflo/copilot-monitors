@@ -83,6 +83,7 @@ function brief(monitor) {
         followUpPrompt: monitor.followUpPrompt,
         followUpOnOutput: monitor.followUpOnOutput,
         followUpOnOutputPrefix: monitor.followUpOnOutputPrefix,
+        followUpQueued: monitor.followUpQueued,
         lastOutput: monitor.output.split("\n").slice(-5).join("\n"),
     };
 }
@@ -178,7 +179,7 @@ async function serve(req, res, entry) {
                 throw new MonitorInputError("Already watching this target at a different frequency. Stop it before starting a new watch.");
             }
             const monitor = existing
-                ? followUpPrompt ? manager.setFollowUp(existing.id, followUpPrompt) : existing
+                ? followUpPrompt ? await manager.setFollowUp(existing.id, followUpPrompt) : existing
                 : await manager.start({ ...preset, followUpPrompt });
             respond(res, existing ? 200 : 201, {
                 monitor: visibleMonitor(monitor), existing: Boolean(existing), followUpUpdated: Boolean(existing && followUpPrompt),
@@ -205,7 +206,7 @@ async function serve(req, res, entry) {
         if (!body || typeof body !== "object" || Array.isArray(body)) {
             throw new MonitorInputError("Request must contain a JSON object.");
         }
-        respond(res, 200, { monitor: visibleMonitor(manager.setFollowUp(followUpMatch[1], body.followUpPrompt)) });
+        respond(res, 200, { monitor: visibleMonitor(await manager.setFollowUp(followUpMatch[1], body.followUpPrompt)) });
         return;
     }
     const settingsMatch = /^api\/monitors\/([0-9a-f]{8})\/settings$/.exec(route);
@@ -318,7 +319,7 @@ const session = await joinSession({
                 { name: "list", description: "List monitors and their status.", handler: () => manager.list().map(brief) },
                 { name: "stop", description: "Stop a monitor.", inputSchema: idSchema, handler: ({ input }) => brief(manager.stop(input.id)) },
                 { name: "set_follow_up", description: "Edit or remove a running watch's follow-up prompt.", inputSchema: followUpSchema,
-                    handler: ({ input }) => brief(manager.setFollowUp(input.id, input.followUpPrompt)) },
+                    handler: async ({ input }) => brief(await manager.setFollowUp(input.id, input.followUpPrompt)) },
                 { name: "update_settings", description: "Change a watch's title and, for running built-in watches, its check frequency.",
                     inputSchema: settingsSchema,
                     handler: async ({ input }) => brief(await updateSettings(input.id, input.title, input.intervalSeconds)) },

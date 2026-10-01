@@ -61,9 +61,10 @@ light-theme capture uses the canvas's light color mode.
    immediately, without an agent turn.
 3. Keep working, or leave the agent idle. Inspect progress in the canvas;
    optionally set a follow-up for completed PR or branch CI cycles. On a
-   built-in branch watch with already-complete checks, adding a follow-up
-   queues it once for that current cycle; later completed cycles can trigger
-   it again. PR watches stay active across pushes until the PR closes or
+   continuous progress watch with already-complete checks (including custom
+   Azure watchers), saving a follow-up queues it once for that prompt and
+   current cycle, even if the prompt was configured at startup. Later completed
+   cycles or a changed prompt can trigger it again. PR watches stay active across pushes until the PR closes or
    merges.
 
 After a push, the next configured poll clears the previous commit's results

@@ -258,15 +258,15 @@ test("a running watch can add, edit, and remove its follow-up before an event", 
         description: "Branch", command: "sleep 0.3; echo first; sleep 0.3; echo second; sleep 30",
         continuous: true, followUpOnOutput: true,
     });
-    assert.equal(manager.setFollowUp(monitor.id, "  Review first commit  ").followUpPrompt, "Review first commit");
+    assert.equal((await manager.setFollowUp(monitor.id, "  Review first commit  ")).followUpPrompt, "Review first commit");
     await until(() => messages.length === 1);
     assert.equal(messages[0].source, "system");
     assert.match(messages[0].prompt, /Review first commit/);
-    assert.equal(manager.setFollowUp(monitor.id, "").followUpPrompt, null);
+    assert.equal((await manager.setFollowUp(monitor.id, "")).followUpPrompt, null);
     await until(() => messages.length === 2);
     assert.doesNotMatch(messages[1].prompt, /User-configured follow-up/);
     assert.equal(messages[1].source, undefined);
-    assert.equal(manager.setFollowUp(monitor.id, "Review next commit").followUpPrompt, "Review next commit");
+    assert.equal((await manager.setFollowUp(monitor.id, "Review next commit")).followUpPrompt, "Review next commit");
     manager.stop(monitor.id);
     await assert.rejects(async () => manager.setFollowUp(monitor.id, "Too late"), /Only running monitors/);
 });
@@ -327,16 +327,16 @@ test("adding a follow-up to already completed CI posts once, not on every save o
     });
     await until(() => manager.list()[0].phase === "waiting");
     assert.deepEqual(messages, []);
-    assert.equal(manager.setFollowUp(monitor.id, "Trigger all tests").followUpQueued, true);
+    assert.equal((await manager.setFollowUp(monitor.id, "Trigger all tests")).followUpQueued, true);
     await until(() => messages.length === 1);
     assert.equal(messages[0].source, "system");
     assert.match(messages[0].prompt, /2 current checks have completed/);
-    assert.equal(manager.setFollowUp(monitor.id, "Trigger all tests").followUpQueued, false);
-    assert.equal(manager.setFollowUp(monitor.id, "Clarify which tests").followUpQueued, false);
-    assert.equal(manager.setFollowUp(monitor.id, "").followUpQueued, false);
-    assert.equal(manager.setFollowUp(monitor.id, "Trigger all tests").followUpQueued, false);
+    assert.equal((await manager.setFollowUp(monitor.id, "Trigger all tests")).followUpQueued, false);
+    assert.equal((await manager.setFollowUp(monitor.id, "Clarify which tests")).followUpQueued, true);
+    assert.equal((await manager.setFollowUp(monitor.id, "")).followUpQueued, false);
+    assert.equal((await manager.setFollowUp(monitor.id, "Trigger all tests")).followUpQueued, false);
     await until(() => manager.list()[0].checks === 2);
-    assert.equal(messages.length, 1);
+    assert.equal(messages.length, 2);
     manager.stop(monitor.id);
 });
 
