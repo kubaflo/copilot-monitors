@@ -15,13 +15,13 @@ const START_DESCRIPTION = [
     "Starting a monitor automatically opens the Live Watches canvas.",
     "Live Watches starts these pasted links without an agent turn: https://github.com/owner/repo/pull/123 (or #123 for this repo), https://github.com/owner/repo/actions/runs/123, https://github.com/owner/repo/tree/main (single-segment branch), and https://dev.azure.com/org/project/_build/results?buildId=123 (also org.visualstudio.com). Other URLs and descriptions need an agent-written monitor.",
     "Print only meaningful changes: monitors sending more than 10 messages in 5 minutes are stopped. Use `grep --line-buffered` in pipes.",
-    "Runs in the session's working directory with a deadline (default 30 minutes, max 240); at the deadline it stops and you get one notice. For ongoing conditions such as new commits, set continuous: true instead of timeoutMinutes so it runs until stopped or this session ends, without periodic AI wake-ups.",
+    "Runs in the session's working directory with a deadline (default 30 minutes, max 240); at the deadline it stops and you get one notice. For ongoing conditions such as successive CI cycles, set continuous: true instead of timeoutMinutes so it runs until stopped or this session ends, without periodic AI wake-ups.",
     "Pass url for a custom watch with a known HTTPS branch, PR, or build page so its title opens that destination.",
     "Examples: `gh run watch 123 --exit-status >/dev/null 2>&1; echo \"run 123 finished: exit $?\"`;",
     "`prev=; while :; do s=$(gh pr checks 42 --json bucket --jq '[.[].bucket]|unique|join(\",\")'); [ \"$s\" != \"$prev\" ] && echo \"checks: $s\" && prev=$s; case $s in *pending*) sleep 60;; *) exit 0;; esac; done`;",
     "`tail -F build.log | grep --line-buffered -E 'error|FAILED'`.",
-    `To watch GitHub PR checks across successive pushes, use \`${watcherCommand()} pr <owner/repo or . for this repo> <number>\` with continuous: true, progress: true, followUpOnOutput: true, and followUpOnOutputPrefix: "CI ended:". To act when only one pipeline ends, append \`--pipeline <name>\` and use followUpOnOutputPrefix: "CI ended: <name> |"; other checks remain visible. The PR watch stops when the PR closes or merges. A GitHub Actions run (\`… run <owner/repo> <runId>\`) or Azure build (\`… azdo <org> <project> <buildId>\`) is one-shot. For a GitHub branch use \`… branch <owner/repo> <branch>\` to track commits and CI cycles on its head. Built-in progress updates are visible in the canvas but do not wake the agent.`,
-    "For a MAUI Azure branch, the bundled examples/watch-maui-branch-ci.mjs script accepts --notify-pipeline maui-pr and emits 'Azure branch CI finished: maui-pr |' as soon as that build ends, while the other two pipelines keep running in the canvas. A continuous watch can wake the agent on every matching completion; the user-authored follow-up decides whether to fix, commit, push and wait for another cycle, or stop when CI is green. Watches do not edit code or rerun builds on their own.",
+    `To watch GitHub PR checks across successive pushes, use \`${watcherCommand()} pr <owner/repo or . for this repo> <number>\` with continuous: true, progress: true, followUpOnOutput: true, and followUpOnOutputPrefix: "CI ended:". To act when only one pipeline ends, append \`--pipeline <name>\` and use followUpOnOutputPrefix: "CI ended: <name> |"; other checks remain visible. The PR watch stops when the PR closes or merges. A GitHub Actions run (\`… run <owner/repo> <runId>\`) or Azure build (\`… azdo <org> <project> <buildId>\`) is one-shot. For a GitHub branch use \`… branch <owner/repo> <branch>\` to track only CI cycles on its head. PR and branch head changes are tracked internally and never emit commit alerts. Built-in progress updates are visible in the canvas but do not wake the agent.`,
+    "For a MAUI Azure branch, the bundled examples/watch-maui-branch-ci.mjs script accepts --notify-pipeline maui-pr and emits 'Azure branch CI finished: maui-pr |' as soon as that build ends, while the other two pipelines keep running in the canvas. It tracks head changes internally without commit alerts. A continuous watch can wake the agent on every matching completion; the user-authored follow-up decides whether to fix, commit, push and wait for another cycle, or stop when CI is green. Watches do not edit code or rerun builds on their own.",
 ].join(" ");
 
 const assets = new Map(await Promise.all([
@@ -222,6 +222,11 @@ async function serve(req, res, entry) {
         respond(res, 200, { monitor: visibleMonitor(manager.stop(match[1])) });
         return;
     }
+    const removeMatch = /^api\/monitors\/([0-9a-f]{8})\/remove$/.exec(route);
+    if (removeMatch) {
+        respond(res, 200, await manager.remove(removeMatch[1]));
+        return;
+    }
     respond(res, 404, { error: "Not found." });
 }
 
@@ -308,6 +313,12 @@ const session = await joinSession({
             parameters: idSchema,
             handler: async ({ id }) => JSON.stringify(brief(manager.stop(id))),
         },
+        {
+            name: "copilot_monitor_remove",
+            description: "Remove one observer and its local history, stopping it if running and cancelling unsent notifications and follow-ups. Ask for confirmation before removal. Already-delivered or host-queued messages cannot be recalled.",
+            parameters: idSchema,
+            handler: async ({ id }) => JSON.stringify(await manager.remove(id)),
+        },
     ],
     canvases: [
         createCanvas({
@@ -317,6 +328,8 @@ const session = await joinSession({
             actions: [
                 { name: "list", description: "List monitors and their status.", handler: () => manager.list().map(brief) },
                 { name: "stop", description: "Stop a monitor.", inputSchema: idSchema, handler: ({ input }) => brief(manager.stop(input.id)) },
+                { name: "remove", description: "After user confirmation, stop and remove one observer and its local history. Already-delivered or host-queued messages cannot be recalled.",
+                    inputSchema: idSchema, handler: ({ input }) => manager.remove(input.id) },
                 { name: "set_follow_up", description: "Edit or remove a running watch's follow-up prompt.", inputSchema: followUpSchema,
                     handler: ({ input }) => brief(manager.setFollowUp(input.id, input.followUpPrompt)) },
                 { name: "update_settings", description: "Change a watch's title and, for running built-in watches, its check frequency.",

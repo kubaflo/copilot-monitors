@@ -135,6 +135,109 @@ test("the deadline stops the monitor with one notice", async (t) => {
     assert.equal(messages.length, 1);
 });
 
+test("removing a running observer stops its process and cancels pending output, deadline and follow-up", async (t) => {
+    const { manager, messages } = fixture(t, { batchMs: 500, minuteMs: 300 });
+    const sibling = await manager.start({ description: "Sibling", command: "sleep 30", continuous: true });
+    const monitor = await manager.start({
+        description: "Remove me",
+        command: "trap 'echo late; echo late-error >&2; exit 0' TERM; sleep 30 & echo $!; wait",
+        timeoutMinutes: 1, followUpPrompt: "Run follow-up", followUpOnOutput: true,
+    });
+    await until(() => manager.list().find(({ id }) => id === monitor.id)?.output);
+    const pid = Number(manager.list().find(({ id }) => id === monitor.id).output);
+    assert.ok(alive(pid));
+    assert.deepEqual(await manager.remove(monitor.id), { id: monitor.id, removed: true });
+    await until(() => !alive(pid));
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    assert.deepEqual(manager.list().map(({ id, status }) => [id, status]), [[sibling.id, "running"]]);
+    assert.deepEqual(messages, []);
+    await assert.rejects(manager.remove(monitor.id), /was not found/);
+});
+
+test("individual finished removal preserves sibling history and cancels queued deliveries", async (t) => {
+    let release;
+    const queued = new Promise((resolve) => { release = resolve; });
+    const messages = [];
+    const { manager } = fixture(t, {
+        batchMs: 20,
+        send: async (notification) => {
+            messages.push(notification);
+            if (messages.length === 1) await queued;
+        },
+    });
+    t.after(() => release());
+    const monitor = await manager.start({
+        description: "Queued", command: "echo first; sleep 0.15; echo second; sleep 0.15; exit 3",
+        followUpPrompt: "Follow-up", followUpOnOutput: true,
+    });
+    await until(() => messages.length === 1);
+    await until(() => manager.list().find(({ id }) => id === monitor.id)?.status === "failed");
+    const sibling = await manager.start({ description: "Keep history", command: "exit 0" });
+    await until(() => manager.list().find(({ id }) => id === sibling.id)?.status === "exited");
+    await manager.remove(monitor.id);
+    release();
+    await until(() => messages.some(({ displayPrompt }) => displayPrompt.includes("Keep history")));
+    assert.equal(messages.filter(({ displayPrompt }) => displayPrompt.includes("Queued")).length, 1);
+    assert.deepEqual(manager.list().map(({ id }) => id), [sibling.id]);
+    await manager.remove(sibling.id);
+    assert.deepEqual(manager.list(), []);
+});
+
+test("removing a stopped observer deletes only its history", async (t) => {
+    const { manager, messages } = fixture(t);
+    const monitor = await manager.start({ description: "Stopped", command: "sleep 30", continuous: true });
+    manager.stop(monitor.id);
+    await manager.remove(monitor.id);
+    assert.deepEqual(manager.list(), []);
+    assert.deepEqual(messages, []);
+});
+
+test("removal force-cleans descendants even when they ignore graceful termination", async (t) => {
+    const { manager, messages } = fixture(t, { batchMs: 500 });
+    const monitor = await manager.start({
+        description: "Resistant child", command: "bash -c 'trap \"\" TERM; echo $$; while :; do sleep 30; done'",
+        continuous: true,
+    });
+    await until(() => manager.list()[0].output !== "");
+    const pid = Number(manager.list()[0].output);
+    await manager.remove(monitor.id);
+    await until(() => !alive(pid));
+    assert.deepEqual(manager.list(), []);
+    assert.deepEqual(messages, []);
+});
+
+test("removal rejects pending frequency changes and prevents later acknowledgements", async (t) => {
+    const { manager, messages } = fixture(t);
+    const monitor = await manager.start({
+        description: "Frequency", command: "echo ready; sleep 30", continuous: true, pollIntervalMs: 300_000,
+    });
+    await until(() => manager.list()[0].output === "ready");
+    const change = manager.setFrequency(monitor.id, 60_000);
+    const rejected = assert.rejects(change, /removed|ended/);
+    await manager.remove(monitor.id);
+    await rejected;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.deepEqual(manager.list(), []);
+    assert.deepEqual(messages, []);
+});
+
+test("removal reports process cleanup errors and retains a retryable record", async (t) => {
+    const { manager } = fixture(t);
+    const monitor = await manager.start({ description: "Cleanup error", command: "sleep 30", continuous: true });
+    const originalKill = process.kill;
+    try {
+        process.kill = () => { throw Object.assign(new Error("Permission denied"), { code: "EPERM" }); };
+        await assert.rejects(manager.remove(monitor.id), /Could not remove monitor: Permission denied/);
+        assert.equal(manager.list()[0].id, monitor.id);
+        assert.equal(manager.list()[0].status, "failed");
+        assert.match(manager.list()[0].stderr, /Permission denied/);
+    } finally {
+        process.kill = originalKill;
+    }
+    await manager.remove(monitor.id);
+    assert.deepEqual(manager.list(), []);
+});
+
 test("continuous monitors do not time out or wake the agent while quiet", async (t) => {
     const { manager, messages } = fixture(t, { minuteMs: 40 });
     const monitor = await manager.start({

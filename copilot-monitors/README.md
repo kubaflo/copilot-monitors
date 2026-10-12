@@ -15,7 +15,7 @@ without an agent turn:
   tracks PR checks across pushes until the PR closes or merges
 - `https://github.com/owner/repo/actions/runs/123` — waits for a GitHub
   Actions run
-- `https://github.com/owner/repo/tree/main` — tracks new commits and CI
+- `https://github.com/owner/repo/tree/main` — tracks only CI
   checks on the latest commit, including checks already in progress; the
   branch name must be one URL segment
 - `https://dev.azure.com/org/project/_build/results?buildId=123` (or
@@ -29,11 +29,13 @@ CI watches send a message to chat when a cycle finishes, with the result and
 failed jobs. PR watches stay running across pushes and same-head CI reruns;
 their follow-ups run after completed checks, not merely on a new push. They
 stop when the PR closes or merges. Branch watches also report completed CI
-checks attached to their current head, as well as new commits; already-completed
+checks attached to their current head; already-completed
 branch checks at startup do not send an alert. Changes to an already-completed
 check inventory do not repeat that alert; a new in-progress CI cycle on the
 same head can report its completion. Actions-run and Azure-build links are
-one-shot.
+one-shot. PR and branch head changes are tracked internally for correct CI
+identity and progress, but never emit commit alerts or fetch commit comparisons.
+Meaningful CI-access errors and recovery notifications remain visible.
 These use
 `watch.mjs` with `gh` or the Azure DevOps REST API (anonymously, falling back
 to `az login` for private projects). Polling runs locally without invoking AI.
@@ -61,9 +63,8 @@ The title dot is blue while CI is pending, muted gray when every known CI
 check is finished and the continuous watch is idle until its next poll, or red
 for a watcher error. An idle watch still shows its next check time and Stop
 control. Failed CI checks appear in the check
-counts, not as a watcher error. Completed and manually stopped watches
-disappear from the canvas automatically; watcher failures remain visible
-for diagnosis. Their monitor output is still available to the agent.
+counts, not as a watcher error. Completed, stopped, and failed watches remain
+visible with their history until individually removed or cleared.
 Azure DevOps stages show completed/running job counts; GitHub Actions shows
 each job and its step count; PR links show all checks, grouped by workflow.
 Progress updates do not wake the agent. Built-in link watches run until they
@@ -73,7 +74,7 @@ a follow-up prompt to run when a watch or CI cycle finishes.
 For a built-in branch watch, a follow-up runs once for already-completed checks
 when configured, then once for each subsequent completed CI cycle. Saving
 the same prompt again or polling an unchanged completed cycle does not repost
-it. Branch-head changes still alert but do not run that follow-up.
+it. Branch-head changes neither alert nor run that follow-up.
 Chat shows a short `Monitor: <name> <status>.` label instead of the raw
 watch notification; when a follow-up runs, it also shows
 `Custom prompt: <prompt>` above the agent's answer. The complete event output
@@ -110,6 +111,23 @@ session (batched for 2 seconds), and so is its exit. The agent can keep working
 or stay idle until then, and several monitors can run at once. If the agent
 fails or finishes without starting a monitor, the canvas says so and offers
 **Try again**. Stop a monitor from the canvas or ask the agent.
+Every observer has a labelled **Remove** button. It opens a confirmation
+explaining stop-and-remove for a running observer and deletion of only that
+observer's local history. Cancel leaves it untouched. **Stop** remains separate
+and retains history; **Clear finished** removes all finished observers.
+
+Removal stops the command's process tree through the existing cleanup path,
+cancels its batching/deadline/frequency timers and unsent notifications and
+follow-ups, and prevents late output or exit events from restoring its record.
+Other observers are unchanged. Messages already delivered or queued by the host
+cannot be recalled. A cleanup error keeps the record visible for diagnosis and
+retry instead of claiming removal succeeded.
+
+For agent/SDK callers, confirm the user's intent before invoking
+`copilot_monitor_remove({ id })` or the canvas action `remove` with `{ id }`.
+The canvas POST endpoint is `api/monitors/<id>/remove`, relative to its
+token-protected URL. These return `{ id, removed: true }` only on success;
+unknown IDs and cleanup failures return errors.
 For a continuous watch that reports different kinds of changes, set
 `followUpOnOutput: true` and `followUpOnOutputPrefix: "CI ended:"` to run its
 follow-up only for lines beginning with `CI ended:`. Other stdout lines still
@@ -160,7 +178,8 @@ and `followUpOnOutputPrefix: "Azure branch CI finished:"`. To act as soon as
 `--notify-pipeline` with other names to notify when any selected pipeline
 finishes; use the common `"Azure branch CI finished:"` prefix for all of them.
 The other pipelines remain visible in progress but do not delay notifications.
-Branch-head changes and access errors remain ordinary alerts. A completed
+Branch-head changes are silent; CI-access errors and recovery remain ordinary
+alerts. No extra status-only flag is needed. A completed
 build already present on the first poll is shown without an initial follow-up;
 start the watch before pushing or inspect the existing result yourself.
 The example requires public

@@ -19,7 +19,7 @@ next step when a watch fires.
 | The agent invokes tools and reasons through each "still running" result. | A local watcher polls without invoking the model. |
 | You need to return to chat to check on progress. | The canvas updates with check-by-check CI progress. |
 | A long wait can interrupt other work. | Several watches run concurrently while the agent does other work. |
-| You have to prompt the agent again when CI finishes. | An optional follow-up can start automatically on completion or a branch change. |
+| You have to prompt the agent again when CI finishes. | An optional follow-up can start automatically on CI completion. |
 
 For example, a 30-minute CI run checked once per minute can involve about
 30 local polls and **no AI turns during the wait**. Repeatedly asking an agent
@@ -68,9 +68,11 @@ light-theme capture uses the canvas's light color mode.
 
 After a push, the next configured poll clears the previous commit's results
 and displays the new CI cycle (or pending inventory until its jobs appear).
+PR and branch watches track head changes internally; new commits never send
+chat alerts. Only CI completion and meaningful watcher errors wake the agent.
 The canvas refreshes automatically; no manual watch restart is needed.
-Completed and stopped watches disappear from the canvas; watcher failures
-remain visible for diagnosis.
+Completed, stopped, and failed watches remain visible until individually
+removed or cleared with **Clear finished**.
 Branch links use GitHub's **current status-check rollup** on the head commit:
 job-level CI and other current checks, without older rerun records. The title
 opens its configured destination, and group/check names link to the available
@@ -109,7 +111,7 @@ Paste a link in the canvas for a ready-made watcher:
 | --- | --- |
 | Pull request checks | `https://github.com/dotnet/runtime/pull/134886` |
 | Actions run | `https://github.com/dotnet/runtime/actions/runs/36638671692` |
-| Branch commits and head CI | `https://github.com/dotnet/maui/tree/net11.0` |
+| Branch head CI only | `https://github.com/dotnet/maui/tree/net11.0` |
 | Azure DevOps build | `https://dev.azure.com/dnceng-public/public/_build/results?buildId=1616959` |
 
 `#123` watches PR checks in the current repository. Direct branch links support
@@ -133,9 +135,11 @@ The settings control edits the display title and a **running built-in**
 watch's polling frequency (30 seconds to 15 minutes) without restarting it.
 The initial frequency selector applies only to new watches. Cards start
 expanded and can be collapsed independently; the canvas follows the Copilot
-app theme. A completed one-shot watch or manually stopped watch disappears
-from the canvas automatically; a watcher failure remains visible for
-diagnosis. The agent can still inspect monitor output after a card disappears.
+app theme. Each observer has a **Remove** button, including finished observers.
+Its confirmation explains that a running watch will be stopped and its local
+history deleted. **Stop** instead retains the record; **Clear finished** removes
+all finished records. Removal cancels unsent notifications and follow-ups, but
+cannot recall messages already delivered or queued by the host.
 
 For a fix → push → observe loop, set a bounded PR follow-up such as “If CI
 failed, fix it, validate, commit and push; stop when CI passes or after three

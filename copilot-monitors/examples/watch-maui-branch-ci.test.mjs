@@ -70,9 +70,7 @@ test("a pushed head clears old CI before showing pending inventory and new jobs"
     assert.deepEqual(progress.filter(([phase]) => phase === "waiting").map(([, stages]) => stages.map(({ name }) => name)),
         [["Old job"], ["maui-pr: awaiting jobs"], ["New job"]]);
     assert.equal(progress.filter(([phase, stages]) => phase === "checking" && stages?.length === 0).length, 1);
-    assert.deepEqual(lines, [
-        `dotnet/maui inflight/current moved ${oldHead.slice(0, 10)} -> ${newHead.slice(0, 10)}. https://github.com/dotnet/maui/tree/inflight/current`,
-    ]);
+    assert.deepEqual(lines, []);
 });
 
 test("selected MAUI pipeline ends trigger each fix-push-rerun cycle before other pipelines finish", async () => {
@@ -114,10 +112,9 @@ test("selected MAUI pipeline ends trigger each fix-push-rerun cycle before other
         report: () => {},
     }), end);
     assert.equal(lines.filter((line) => line.startsWith("Azure branch CI finished: maui-pr |")).length, 3);
-    assert.equal(lines.filter((line) => line.includes(" moved ")).length, 2);
     assert.ok(lines.some((line) => line.includes(`${second.slice(0, 10)}): failed`)));
     assert.ok(lines.some((line) => line.includes(`${third.slice(0, 10)}): passed`)));
-    assert.equal(lines.length, 5);
+    assert.equal(lines.length, 3);
 });
 
 test("default MAUI watch waits for all pipelines", async () => {
@@ -141,4 +138,48 @@ test("default MAUI watch waits for all pipelines", async () => {
     }), end);
     assert.equal(lines.length, 1);
     assert.match(lines[0], /^Azure branch CI finished: dotnet\/maui inflight\/current/);
+});
+
+test("MAUI all-pipeline completion re-arms on a new head without a commit alert", async () => {
+    const first = "a".repeat(40);
+    const second = "b".repeat(40);
+    const snapshots = [first, second, second].map((sha) => ({
+        sha, builds: ["maui-pr", "maui-pr-uitests", "maui-pr-devicetests"].map((name, index) => ({
+            name, id: index + 1, state: "passed", url: `https://example.com/build/${index + 1}`,
+        })),
+        complete: true, key: sha, stages: [{ name: "Build", state: "passed" }],
+    }));
+    let index = 0;
+    const lines = [];
+    const end = new Error("test complete");
+    await assert.rejects(watch("main", {
+        readHeadSha: async () => snapshots[index].sha,
+        readSnapshot: async () => snapshots[index],
+        wait: async () => { if (index === snapshots.length - 1) throw end; index++; },
+        emit: (line) => lines.push(line),
+        report: () => {},
+    }), end);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /^Azure branch CI finished: dotnet\/maui main \(bbbbbbbbbb\)/);
+});
+
+test("MAUI CI access errors are deduplicated and recovery still alerts", async () => {
+    const sha = "a".repeat(40);
+    let index = 0;
+    const lines = [];
+    const end = new Error("test complete");
+    await assert.rejects(watch("main", {
+        readHeadSha: async () => sha,
+        readSnapshot: async () => {
+            if (index < 2) throw new Error("Azure CI access unavailable");
+            return { sha, builds: [], complete: false, key: "none", stages: [] };
+        },
+        wait: async () => { if (index === 3) throw end; index++; },
+        emit: (line) => lines.push(line),
+        report: () => {},
+    }), end);
+    assert.deepEqual(lines, [
+        "Branch watch error for dotnet/maui main: Azure CI access unavailable",
+        "Watching dotnet/maui main: branch CI access recovered.",
+    ]);
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { presetFor } from "./presets.mjs";
-import { actionStages, azureStages, branchCheckRuns, branchChecksMessage, branchCurrentChecks, branchMessage, buildMessage, checkStages, checksMessage, createFrequencyControl, githubApi, parseJsonPages, publicGitHubApi, runMessage, watchBranch, watchPullRequest } from "./watch.mjs";
+import { actionStages, azureStages, branchCheckRuns, branchChecksMessage, branchCurrentChecks, buildMessage, checkStages, checksMessage, createFrequencyControl, githubApi, parseJsonPages, publicGitHubApi, runMessage, watchBranch, watchPullRequest } from "./watch.mjs";
 
 test("pasted links become built-in watchers", () => {
     const cases = [
@@ -115,7 +115,7 @@ test("other text and unsafe links go to the agent", () => {
     }
 });
 
-test("branch polling only emits when the head changes", async () => {
+test("branch polling silently tracks head changes when no CI is available", async () => {
     const oldSha = "a".repeat(40);
     const newSha = "b".repeat(40);
     const heads = [oldSha, oldSha, oldSha, newSha, newSha];
@@ -129,11 +129,9 @@ test("branch polling only emits when the head changes", async () => {
             if (!heads.length) throw end;
             return { sha: heads.shift() };
         },
-        getChecks: async () => [],
-        compare: async (previous, head) => {
-            assert.equal(previous, oldSha);
-            assert.equal(head, newSha);
-            return { status: "ahead", ahead_by: 1, commits: [{ commit: { message: "Fix CollectionView\n\nDetails" } }] };
+        getChecks: async (head) => {
+            assert.equal(head, heads.length > 1 ? oldSha : newSha);
+            return [];
         },
         wait: async () => {},
         emit: (line) => { lines.push(line); },
@@ -142,10 +140,7 @@ test("branch polling only emits when the head changes", async () => {
             if (phase === "checking" && stages?.length === 0) resets++;
         },
     }), end);
-    assert.deepEqual(lines, [
-        "dotnet/maui net11.0 moved aaaaaaaaaa -> bbbbbbbbbb (ahead, 1 new commit): "
-        + "Fix CollectionView. https://github.com/dotnet/maui/tree/net11.0",
-    ]);
+    assert.deepEqual(lines, []);
     assert.deepEqual(phases, ["checking", "waiting", "checking", "waiting", "checking", "waiting",
         "checking", "checking", "waiting", "checking", "waiting", "checking"]);
     assert.equal(resets, 1);
@@ -162,25 +157,31 @@ test("branch watcher accepts slash refs without treating paths as shell commands
     }), /valid owner\/repository and branch name/);
 });
 
-test("branch comparison errors remain visible in its change notification", async () => {
+test("branch CI access errors and recovery remain visible without commit alerts", async () => {
     const oldSha = "a".repeat(40);
     const newSha = "b".repeat(40);
     const lines = [];
     const end = new Error("test complete");
     end.permanent = true;
-    const heads = [oldSha, newSha];
+    const heads = [oldSha, newSha, newSha, newSha, newSha];
+    let calls = 0;
     await assert.rejects(watchBranch("dotnet/maui", "net11.0", {
         getCommit: async () => {
             if (!heads.length) throw end;
             return { sha: heads.shift() };
         },
-        getChecks: async () => [],
-        compare: async () => { throw new Error("compare unavailable"); },
+        getChecks: async () => {
+            if ([1, 2].includes(calls++)) throw new Error("CI access unavailable");
+            return [];
+        },
         wait: async () => {},
         emit: (line) => { lines.push(line); },
         report: () => {},
     }), end);
-    assert.match(lines[0], /moved aaaaaaaaaa -> bbbbbbbbbb; commit comparison unavailable: compare unavailable/);
+    assert.deepEqual(lines, [
+        "Branch watch error for dotnet/maui net11.0: CI access unavailable",
+        "Watching dotnet/maui net11.0: branch CI access recovered.",
+    ]);
 });
 
 test("branch check runs load every page, not just the first 100 checks", async () => {
@@ -482,14 +483,13 @@ test("PR watcher follows successive pushes and a selected pipeline without waiti
     });
     assert.match(result, /dotnet\/maui#42 merged; watch ended/);
     assert.equal(index, snapshots.length - 1);
-    assert.deepEqual(lines.map((line) => line.startsWith("CI ended:") ? "CI" : "HEAD"),
-        ["CI", "HEAD", "CI", "HEAD", "CI", "CI"]);
-    assert.ok(lines.filter((line) => line.startsWith("CI ended:"))
+    assert.equal(lines.length, 4);
+    assert.ok(lines
         .every((line) => line.startsWith("CI ended: maui-pr | dotnet/maui#42")));
     assert.match(lines[0], /1 failed or canceled/);
-    assert.match(lines[2], /1 passed/);
-    assert.match(lines[4], /1 failed or canceled/);
-    assert.match(lines[5], /1 passed/);
+    assert.match(lines[1], /1 passed/);
+    assert.match(lines[2], /1 failed or canceled/);
+    assert.match(lines[3], /1 passed/);
     assert.equal(phases.at(-1), "complete");
     assert.equal(resets, 2);
 });
@@ -522,10 +522,10 @@ test("default PR watch waits for all checks and re-arms after a new push", async
         emit: (line) => lines.push(line),
         report: () => {},
     }), end);
-    assert.equal(lines.filter((line) => line.startsWith("CI ended:")).length, 2);
-    assert.equal(lines.filter((line) => line.includes("head moved")).length, 1);
+    assert.equal(lines.length, 2);
+    assert.ok(lines.every((line) => line.startsWith("CI ended:")));
     assert.match(lines[0], /1 failed or canceled/);
-    assert.match(lines[2], /2 passed, 0 failed or canceled/);
+    assert.match(lines[1], /2 passed, 0 failed or canceled/);
 });
 
 test("branch watcher does not alert for old CI, but tracks the next head's CI", async () => {
@@ -549,15 +549,15 @@ test("branch watcher does not alert for old CI, but tracks the next head's CI", 
             snapshot = snapshots.shift();
             return { sha: snapshot.sha };
         },
-        getChecks: async () => snapshot.checks,
-        compare: async () => ({ status: "ahead", ahead_by: 1, commits: [] }),
+        getChecks: async (head) => {
+            assert.equal(head, snapshot.sha);
+            return snapshot.checks;
+        },
         wait: async () => {},
         emit: (line) => lines.push(line),
         report: () => {},
     }), end);
-    assert.equal(lines.length, 2);
-    assert.match(lines[0], /net11\.0 moved aaaaaaaaaa -> bbbbbbbbbb/);
-    assert.equal(lines[1], branchChecksMessage("dotnet/maui", "net11.0", second, [newRun]));
+    assert.deepEqual(lines, [branchChecksMessage("dotnet/maui", "net11.0", second, [newRun])]);
 });
 
 test("branch CI summaries distinguish failures, cancellations, warnings, and skips", () => {
