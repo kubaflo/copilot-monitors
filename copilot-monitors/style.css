@@ -235,8 +235,11 @@ a:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
     .watch-toggle svg { transition: none; }
 }
-.stop { min-height: 34px; padding: 5px 11px; font-size: 13px; color: var(--text-color-button-danger-rest, var(--monitor-red)); }
-.stop:hover:not(:disabled) { background: var(--background-color-button-danger-hover, var(--monitor-red)); color: var(--text-color-button-danger-hover, #ffffff); }
+.stop, .watch-remove { min-height: 34px; padding: 5px 11px; font-size: 13px; color: var(--text-color-button-danger-rest, var(--monitor-red)); }
+.stop:hover:not(:disabled), .watch-remove:hover:not(:disabled) { background: var(--background-color-button-danger-hover, var(--monitor-red)); color: var(--text-color-button-danger-hover, #ffffff); }
+.remove-confirmation { margin-top: 12px; padding: 12px; border: 1px solid var(--monitor-border); border-radius: 6px; }
+.remove-confirmation p { margin: 0 0 12px; }
+.remove-confirmation button + button { margin-left: 8px; }
 .indicator { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--monitor-muted); }
 .indicator.running { background: var(--monitor-blue); box-shadow: 0 0 0 4px var(--monitor-pulse); animation: pulse 1.8s ease-in-out infinite; }
 .indicator.failed, .indicator.noisy, .indicator.timed-out { background: var(--monitor-red); }

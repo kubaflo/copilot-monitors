@@ -222,6 +222,11 @@ async function serve(req, res, entry) {
         respond(res, 200, { monitor: visibleMonitor(manager.stop(match[1])) });
         return;
     }
+    const removeMatch = /^api\/monitors\/([0-9a-f]{8})\/remove$/.exec(route);
+    if (removeMatch) {
+        respond(res, 200, await manager.remove(removeMatch[1]));
+        return;
+    }
     respond(res, 404, { error: "Not found." });
 }
 
@@ -308,6 +313,12 @@ const session = await joinSession({
             parameters: idSchema,
             handler: async ({ id }) => JSON.stringify(brief(manager.stop(id))),
         },
+        {
+            name: "copilot_monitor_remove",
+            description: "Remove one observer and its local history, stopping it if running and cancelling unsent notifications and follow-ups. Ask for confirmation before removal. Already-delivered or host-queued messages cannot be recalled.",
+            parameters: idSchema,
+            handler: async ({ id }) => JSON.stringify(await manager.remove(id)),
+        },
     ],
     canvases: [
         createCanvas({
@@ -317,6 +328,8 @@ const session = await joinSession({
             actions: [
                 { name: "list", description: "List monitors and their status.", handler: () => manager.list().map(brief) },
                 { name: "stop", description: "Stop a monitor.", inputSchema: idSchema, handler: ({ input }) => brief(manager.stop(input.id)) },
+                { name: "remove", description: "After user confirmation, stop and remove one observer and its local history. Already-delivered or host-queued messages cannot be recalled.",
+                    inputSchema: idSchema, handler: ({ input }) => manager.remove(input.id) },
                 { name: "set_follow_up", description: "Edit or remove a running watch's follow-up prompt.", inputSchema: followUpSchema,
                     handler: ({ input }) => brief(manager.setFollowUp(input.id, input.followUpPrompt)) },
                 { name: "update_settings", description: "Change a watch's title and, for running built-in watches, its check frequency.",

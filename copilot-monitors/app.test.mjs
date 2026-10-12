@@ -26,6 +26,7 @@ class Element {
     addEventListener(name, handler) { this.listeners[name] = handler; }
     setAttribute(name, value) { this[name] = value; }
     querySelectorAll() { return []; }
+    focus() { document.activeElement = this; }
 }
 
 const elements = new Map();
@@ -89,7 +90,7 @@ test("empty watch list hides its heading and duplicate prompt", async () => {
     assert.equal(elements.get("monitors").children.length, 0);
 });
 
-test("stopped and completed watches disappear while active watches and errors remain", async () => {
+test("finished observers remain individually removable with active observers sorted first", async () => {
     const originalFetch = context.fetch;
     const running = { id: "running", description: "MAUI main", status: "running" };
     const stopped = { id: "stopped", description: "Internal build", status: "stopped" };
@@ -101,7 +102,7 @@ test("stopped and completed watches disappear while active watches and errors re
         }) });
         await context.refreshWatches();
         assert.deepEqual(Array.from(elements.get("monitors").children, watchTitle).map((title) => title.textContent),
-            ["MAUI main", "Broken watcher"]);
+            ["MAUI main", "Broken watcher", "maui-pr build", "Internal build"]);
         assert.equal(elements.get("active-count").textContent, "1 active");
         assert.equal(elements.get("watch-toolbar").hidden, false);
         assert.equal(elements.get("clear").hidden, false);
@@ -111,20 +112,85 @@ test("stopped and completed watches disappear while active watches and errors re
         }) });
         await context.refreshWatches();
         assert.deepEqual(Array.from(elements.get("monitors").children, watchTitle).map((title) => title.textContent),
-            ["MAUI main"]);
-        assert.equal(elements.get("clear").hidden, true);
+            ["MAUI main", "maui-pr build", "Internal build"]);
+        assert.equal(elements.get("clear").hidden, false);
 
         context.fetch = async () => ({ ok: true, json: async () => ({
             monitors: [stopped, finished], ask: null,
         }) });
         await context.refreshWatches();
-        assert.equal(elements.get("monitors").children.length, 0);
-        assert.equal(elements.get("watch-toolbar").hidden, true);
-        assert.equal(elements.get("clear").hidden, true);
+        assert.equal(elements.get("monitors").children.length, 2);
+        assert.equal(elements.get("watch-toolbar").hidden, false);
+        assert.equal(elements.get("clear").hidden, false);
         assert.equal(elements.get("active-count").textContent, "0 active");
     } finally {
         context.fetch = originalFetch;
         await context.refreshWatches();
+    }
+});
+
+test("every observer has a labelled Remove action with confirmation, cancellation, and isolated removal", async () => {
+    const originalFetch = context.fetch;
+    const calls = [];
+    try {
+        context.fetch = async (url, options) => {
+            if (options) {
+                calls.push(url.pathname);
+                return { ok: true, json: async () => ({ id: url.pathname.split("/").at(-2), removed: true }) };
+            }
+            return { ok: true, json: async () => ({ monitors: [], ask: null }) };
+        };
+        for (const state of ["running", "stopped", "failed", "exited", "timed-out", "noisy"]) {
+            const id = `remove-${state}`;
+            const card = context.renderCard({ id, title: state, description: "CI", status: state });
+            const remove = card.children[0].children[1].children.find((child) => child.className === "watch-remove");
+            assert.equal(remove.tagName, "BUTTON");
+            assert.equal(remove.type, "button");
+            assert.equal(remove.textContent, "Remove");
+            assert.equal(remove["aria-label"], `Remove observer ${state}`);
+            const confirmation = watchBody(card).children.at(-1);
+            assert.equal(confirmation.hidden, true);
+            remove.listeners.click();
+            assert.equal(confirmation.hidden, false);
+            assert.equal(confirmation.role, "group");
+            assert.equal(remove["aria-controls"], confirmation.id);
+            assert.match(confirmation.children[0].textContent, /local history.*Pending notifications.*cannot be recalled/);
+            const [, confirm, cancel] = confirmation.children;
+            assert.equal(document.activeElement, cancel);
+            assert.equal(confirm.textContent, state === "running" ? "Stop and remove" : "Remove watch");
+            cancel.listeners.click();
+            assert.equal(confirmation.hidden, true);
+            assert.equal(document.activeElement, remove);
+            assert.equal(calls.length, ["running", "stopped", "failed", "exited", "timed-out", "noisy"].indexOf(state));
+            remove.listeners.click();
+            const rerendered = context.renderCard({ id, title: state, description: "CI", status: state });
+            assert.equal(watchBody(rerendered).children.at(-1).hidden, false);
+            await confirm.listeners.click();
+            assert.equal(calls.at(-1), `/api/monitors/${id}/remove`);
+            assert.equal(elements.get("status").children[0].textContent, "Observer removed.");
+        }
+    } finally {
+        context.fetch = originalFetch;
+        document.activeElement = undefined;
+    }
+});
+
+test("removal failures remain visible and allow retry without claiming success", async () => {
+    const originalFetch = context.fetch;
+    try {
+        context.fetch = async () => ({ ok: false, json: async () => ({ error: "Could not stop observer" }) });
+        const card = context.renderCard({ id: "remove-error", description: "CI", status: "running" });
+        const remove = card.children[0].children[1].children.find((child) => child.className === "watch-remove");
+        remove.listeners.click();
+        const [, confirm, cancel] = watchBody(card).children.at(-1).children;
+        await confirm.listeners.click();
+        assert.equal(elements.get("status").children[0].textContent, "Could not stop observer");
+        assert.equal(confirm.disabled, false);
+        assert.equal(remove.disabled, false);
+        cancel.listeners.click();
+    } finally {
+        context.fetch = originalFetch;
+        document.activeElement = undefined;
     }
 });
 

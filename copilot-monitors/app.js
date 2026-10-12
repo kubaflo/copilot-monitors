@@ -16,6 +16,8 @@ const followUpDrafts = new Map();
 const openSettings = new Set();
 const settingsDrafts = new Map();
 const collapsedWatches = new Set();
+const openRemovals = new Set();
+const removingWatches = new Set();
 let lastAsk = "";
 let lastMonitors = "";
 
@@ -470,6 +472,76 @@ function card(monitor) {
         setCollapsed(!body.hidden);
     });
     setCollapsed(collapsed);
+    const remove = node("button", "watch-remove", "Remove");
+    remove.type = "button";
+    remove.title = `Remove ${displayName}`;
+    remove.setAttribute("aria-label", `Remove observer ${displayName}`);
+    remove.disabled = removingWatches.has(monitor.id);
+    remove.setAttribute("aria-expanded", String(openRemovals.has(monitor.id)));
+    const confirmation = node("div", "remove-confirmation");
+    confirmation.id = `remove-confirmation-${monitor.id}`;
+    confirmation.hidden = !openRemovals.has(monitor.id);
+    confirmation.setAttribute("role", "group");
+    const explanation = node("p", "", `${monitor.status === "running"
+        ? "Stop and remove" : "Remove"} "${displayName}"? This deletes this observer's local history.`
+        + " Pending notifications and follow-ups will be cancelled. Already-delivered or host-queued messages cannot be recalled.");
+    explanation.id = `remove-explanation-${monitor.id}`;
+    confirmation.setAttribute("aria-labelledby", explanation.id);
+    remove.setAttribute("aria-controls", confirmation.id);
+    const confirm = node("button", "watch-remove", monitor.status === "running" ? "Stop and remove" : "Remove watch");
+    confirm.type = "button";
+    confirm.disabled = removingWatches.has(monitor.id);
+    const cancel = node("button", "", "Cancel");
+    cancel.type = "button";
+    cancel.disabled = removingWatches.has(monitor.id);
+    confirmation.append(explanation, confirm, cancel);
+    remove.addEventListener("click", () => {
+        openRemovals.add(monitor.id);
+        setCollapsed(false);
+        confirmation.hidden = false;
+        remove.setAttribute("aria-expanded", "true");
+        cancel.focus();
+    });
+    const cancelRemoval = () => {
+        openRemovals.delete(monitor.id);
+        confirmation.hidden = true;
+        remove.setAttribute("aria-expanded", "false");
+        remove.focus();
+    };
+    cancel.addEventListener("click", cancelRemoval);
+    confirmation.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !confirm.disabled) {
+            event.preventDefault();
+            cancelRemoval();
+        }
+    });
+    confirm.addEventListener("click", async () => {
+        if (removingWatches.has(monitor.id)) return;
+        removingWatches.add(monitor.id);
+        confirm.disabled = true;
+        cancel.disabled = true;
+        remove.disabled = true;
+        try {
+            const result = await request(`api/monitors/${monitor.id}/remove`, {});
+            if (result.id !== monitor.id || result.removed !== true) throw new Error("The observer was not removed.");
+            for (const state of [openStages, openGroups, openFollowUps, followUpDrafts, openSettings, settingsDrafts, collapsedWatches, openRemovals]) {
+                state.delete(monitor.id);
+            }
+            show("Observer removed.");
+            await refresh();
+            input.focus();
+        } catch (error) {
+            show(error.message, true);
+        } finally {
+            removingWatches.delete(monitor.id);
+            confirm.disabled = false;
+            cancel.disabled = false;
+            remove.disabled = false;
+            lastMonitors = "";
+            await refresh();
+        }
+    });
+    actions.append(remove);
     actions.append(toggle);
     header.append(actions);
     article.append(header, body);
@@ -490,13 +562,14 @@ function card(monitor) {
         error.title = monitor.stderr;
         body.append(error);
     }
+    body.append(confirmation);
     return article;
 }
 
 async function refresh() {
     try {
         const { monitors, ask } = await request("api/monitors");
-        const visible = monitors.filter((monitor) => !["exited", "stopped"].includes(monitor.status));
+        const visible = monitors;
         showAsk(ask);
         activeCount.textContent = `${visible.filter((monitor) => monitor.status === "running").length} active`;
         toolbar.hidden = visible.length === 0;

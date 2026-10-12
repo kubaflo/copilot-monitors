@@ -103,17 +103,18 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
     }
 
     function deliver(monitor, notification) {
+        if (monitor.removed || monitor.status === "stopped") return;
         if (monitor.followUpOnCurrentComplete && notification.followUp && monitor.completedFollowUpDelivered) return;
         if (notification.followUp) monitor.followUpDelivered = true;
         if (monitor.followUpOnCurrentComplete && notification.followUp) monitor.completedFollowUpDelivered = true;
         monitor.notifications += 1;
         monitor.delivery = monitor.delivery
-            .then(() => send({
+            .then(() => monitor.removed || monitor.status === "stopped" ? undefined : send({
                 prompt: notification.prompt,
                 displayPrompt: notification.displayPrompt,
                 ...(notification.followUp ? { source: "system" } : {}),
             }))
-            .catch((error) => Promise.resolve(log(`Monitor "${monitor.description}" could not notify the agent: ${error.message}`))
+            .catch((error) => monitor.removed ? undefined : Promise.resolve(log(`Monitor "${monitor.description}" could not notify the agent: ${error.message}`))
                 .catch(() => {}));
     }
 
@@ -186,18 +187,26 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         return groups.map((group, index) => message(monitor, index === 1 ? ending : null, group, index === 0 ? omitted : 0));
     }
 
-    function terminate(monitor, force = false) {
+    function terminate(monitor, force = false, strict = false) {
         const { pid } = monitor.child;
         if (!pid) return;
         if (process.platform === "win32") {
-            spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () => {});
-            return;
+            const cleanup = new Promise((resolve, reject) => {
+                const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+                killer.on("error", reject);
+                killer.on("close", (code) => code === 0 || monitor.child.exitCode !== null || monitor.child.signalCode !== null
+                    ? resolve() : reject(new Error(`taskkill exited with code ${code}.`)));
+            });
+            return strict ? cleanup : cleanup.catch((error) =>
+                Promise.resolve(log(`Could not stop monitor "${monitor.description}": ${error.message}`)).catch(() => {}));
         }
         const signal = (name) => {
             try {
                 process.kill(-pid, name);
-            } catch {
-                // The process group has already exited.
+            } catch (error) {
+                if (error.code === "ESRCH") return;
+                if (strict) throw error;
+                Promise.resolve(log(`Could not stop monitor "${monitor.description}": ${error.message}`)).catch(() => {});
             }
         };
         if (force) {
@@ -205,10 +214,16 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             return;
         }
         signal("SIGTERM");
-        setTimeout(() => signal("SIGKILL"), 3_000).unref();
+        setTimeout(() => {
+            try {
+                signal("SIGKILL");
+            } catch (error) {
+                Promise.resolve(log(`Could not stop monitor "${monitor.description}": ${error.message}`)).catch(() => {});
+            }
+        }, 3_000).unref();
     }
 
-    function finish(monitor, status, exitCode = null) {
+    function finish(monitor, status, exitCode = null, terminateProcess = true) {
         if (monitor.status !== "running") return;
         monitor.status = status;
         monitor.exitCode = exitCode;
@@ -216,7 +231,7 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         settleFrequency(monitor, new MonitorInputError("Monitor ended before its frequency change was confirmed."));
         clearTimeout(monitor.batchTimer);
         clearTimeout(monitor.deadlineTimer);
-        terminate(monitor);
+        if (terminateProcess) terminate(monitor);
         if (status === "stopped") {
             monitor.pending = [];
         } else if (!(status === "exited" && monitor.followUpPrompt && monitor.followUpOnOutput
@@ -379,7 +394,7 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             phase: null, checks: 0, lastCheckedAt: null, lastAttemptAt: null, nextCheckAt: null,
             stages: null,
             lines: [], pending: [], pendingOmitted: 0, stderr: [], recent: [], notifications: 0,
-            followUpDelivered: false, completedFollowUpDelivered: false,
+            followUpDelivered: false, completedFollowUpDelivered: false, removed: false,
             batchTimer: null, deadlineTimer: null, frequencyChange: null, delivery: Promise.resolve(),
         };
         monitors.set(monitor.id, monitor);
@@ -395,12 +410,14 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
             monitor.batchTimer ??= setTimeout(() => flush(monitor), batchMs);
         });
         createInterface({ input: child.stderr }).on("line", (line) => {
+            if (monitor.removed || monitor.status !== "running") return;
             if (updateFrequency(monitor, line)) return;
             if (updateProgress(monitor, line)) return;
             monitor.stderr.push(clip(line));
             if (monitor.stderr.length > 20) monitor.stderr.shift();
         });
         child.on("error", (error) => {
+            if (monitor.removed) return;
             monitor.error = error.message;
             finish(monitor, "failed");
         });
@@ -415,6 +432,33 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         const monitor = get(id);
         finish(monitor, "stopped");
         return summary(monitor);
+    }
+
+    async function remove(id) {
+        const monitor = get(id);
+        if (monitor.removing) throw new MonitorInputError(`Monitor ${id} is already being removed.`);
+        monitor.removing = true;
+        const running = monitor.status === "running" || monitor.cleanupPending;
+        monitor.cleanupPending = running;
+        monitor.removed = true;
+        monitor.followUpPrompt = null;
+        monitor.pending = [];
+        monitor.pendingOmitted = 0;
+        finish(monitor, "stopped", null, false);
+        settleFrequency(monitor, new MonitorInputError("Monitor removed before its frequency change was confirmed."));
+        clearTimeout(monitor.batchTimer);
+        clearTimeout(monitor.deadlineTimer);
+        try {
+            if (running) await terminate(monitor, true, true);
+        } catch (error) {
+            monitor.removing = false;
+            monitor.status = "failed";
+            monitor.error = `Could not remove monitor: ${error.message}`;
+            monitor.stderr.push(monitor.error);
+            throw new Error(monitor.error);
+        }
+        monitors.delete(id);
+        return { id, removed: true };
     }
 
     function setFollowUp(id, prompt) {
@@ -458,7 +502,10 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
 
     function clear() {
         for (const [id, monitor] of monitors) {
-            if (monitor.status !== "running") monitors.delete(id);
+            if (monitor.status !== "running" && !monitor.cleanupPending) {
+                monitor.removed = true;
+                monitors.delete(id);
+            }
         }
         return list();
     }
@@ -469,7 +516,7 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
 
     function dispose() {
         for (const monitor of monitors.values()) {
-            if (monitor.status !== "running") continue;
+            if (monitor.status !== "running" && !monitor.cleanupPending) continue;
             monitor.status = "stopped";
             settleFrequency(monitor, new MonitorInputError("Monitor stopped before its frequency change was confirmed."));
             clearTimeout(monitor.batchTimer);
@@ -478,5 +525,5 @@ export function createMonitorManager({ send, log, workingDirectory, batchMs = 2_
         }
     }
 
-    return { start, stop, setFollowUp, setTitle, setFrequency, clear, list, dispose };
+    return { start, stop, remove, setFollowUp, setTitle, setFrequency, clear, list, dispose };
 }

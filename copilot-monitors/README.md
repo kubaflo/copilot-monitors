@@ -63,9 +63,8 @@ The title dot is blue while CI is pending, muted gray when every known CI
 check is finished and the continuous watch is idle until its next poll, or red
 for a watcher error. An idle watch still shows its next check time and Stop
 control. Failed CI checks appear in the check
-counts, not as a watcher error. Completed and manually stopped watches
-disappear from the canvas automatically; watcher failures remain visible
-for diagnosis. Their monitor output is still available to the agent.
+counts, not as a watcher error. Completed, stopped, and failed watches remain
+visible with their history until individually removed or cleared.
 Azure DevOps stages show completed/running job counts; GitHub Actions shows
 each job and its step count; PR links show all checks, grouped by workflow.
 Progress updates do not wake the agent. Built-in link watches run until they
@@ -112,6 +111,23 @@ session (batched for 2 seconds), and so is its exit. The agent can keep working
 or stay idle until then, and several monitors can run at once. If the agent
 fails or finishes without starting a monitor, the canvas says so and offers
 **Try again**. Stop a monitor from the canvas or ask the agent.
+Every observer has a labelled **Remove** button. It opens a confirmation
+explaining stop-and-remove for a running observer and deletion of only that
+observer's local history. Cancel leaves it untouched. **Stop** remains separate
+and retains history; **Clear finished** removes all finished observers.
+
+Removal stops the command's process tree through the existing cleanup path,
+cancels its batching/deadline/frequency timers and unsent notifications and
+follow-ups, and prevents late output or exit events from restoring its record.
+Other observers are unchanged. Messages already delivered or queued by the host
+cannot be recalled. A cleanup error keeps the record visible for diagnosis and
+retry instead of claiming removal succeeded.
+
+For agent/SDK callers, confirm the user's intent before invoking
+`copilot_monitor_remove({ id })` or the canvas action `remove` with `{ id }`.
+The canvas POST endpoint is `api/monitors/<id>/remove`, relative to its
+token-protected URL. These return `{ id, removed: true }` only on success;
+unknown IDs and cleanup failures return errors.
 For a continuous watch that reports different kinds of changes, set
 `followUpOnOutput: true` and `followUpOnOutputPrefix: "CI ended:"` to run its
 follow-up only for lines beginning with `CI ended:`. Other stdout lines still
