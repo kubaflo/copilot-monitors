@@ -26,6 +26,7 @@ class Element {
     addEventListener(name, handler) { this.listeners[name] = handler; }
     setAttribute(name, value) { this[name] = value; }
     querySelectorAll() { return []; }
+    closest() { return null; }
     focus() { document.activeElement = this; }
 }
 
