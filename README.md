@@ -19,7 +19,7 @@ next step when a watch fires.
 | The agent invokes tools and reasons through each "still running" result. | A local watcher polls without invoking the model. |
 | You need to return to chat to check on progress. | The canvas updates with check-by-check CI progress. |
 | A long wait can interrupt other work. | Several watches run concurrently while the agent does other work. |
-| You have to prompt the agent again when CI finishes. | An optional follow-up can start automatically on completion or a branch change. |
+| You have to prompt the agent again when CI finishes. | An optional follow-up can start automatically on CI completion. |
 
 For example, a 30-minute CI run checked once per minute can involve about
 30 local polls and **no AI turns during the wait**. Repeatedly asking an agent
@@ -68,6 +68,8 @@ light-theme capture uses the canvas's light color mode.
 
 After a push, the next configured poll clears the previous commit's results
 and displays the new CI cycle (or pending inventory until its jobs appear).
+PR and branch watches track head changes internally; new commits never send
+chat alerts. Only CI completion and meaningful watcher errors wake the agent.
 The canvas refreshes automatically; no manual watch restart is needed.
 Completed and stopped watches disappear from the canvas; watcher failures
 remain visible for diagnosis.
@@ -109,7 +111,7 @@ Paste a link in the canvas for a ready-made watcher:
 | --- | --- |
 | Pull request checks | `https://github.com/dotnet/runtime/pull/134886` |
 | Actions run | `https://github.com/dotnet/runtime/actions/runs/36638671692` |
-| Branch commits and head CI | `https://github.com/dotnet/maui/tree/net11.0` |
+| Branch head CI only | `https://github.com/dotnet/maui/tree/net11.0` |
 | Azure DevOps build | `https://dev.azure.com/dnceng-public/public/_build/results?buildId=1616959` |
 
 `#123` watches PR checks in the current repository. Direct branch links support

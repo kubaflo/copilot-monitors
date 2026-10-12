@@ -184,7 +184,6 @@ export async function watch(branch, {
             if (current.sha !== head) throw new Error("Branch head changed while reading CI; retrying.");
             if (lastError) emit(`Watching ${repo} ${branch}: branch CI access recovered.`);
             if (previous && current.sha !== previous) {
-                emit(`${repo} ${branch} moved ${previous.slice(0, 10)} -> ${current.sha.slice(0, 10)}. https://github.com/${repo}/tree/${branch}`);
                 completedKey = null;
                 completedPipelines.clear();
             }

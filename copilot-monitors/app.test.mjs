@@ -272,6 +272,20 @@ test("continuous watch with completed CI shows an idle dot and keeps polling", (
     assert.equal(context.renderCard({ ...monitor, status: "failed" }).children[0].children[0].children[0].className, "indicator failed");
 });
 
+test("branch activity describes CI-only waiting while retaining check and retry states", () => {
+    const monitor = {
+        id: "ci-only", description: "Branch dotnet/maui main",
+        status: "running", progress: true, pollIntervalMs: 300_000, stages: [],
+    };
+    for (const [phase, label] of [
+        ["waiting", "Waiting for CI"], ["checking", "Checking now"], ["retrying", "Retrying check"],
+    ]) {
+        const activity = watchBody(context.renderCard({ ...monitor, phase }))
+            .children.find((child) => child.className === "watch-activity");
+        assert.equal(activity.children[0].children[0].textContent, label);
+    }
+});
+
 test("unknown or pending inventory and active checks do not look idle", () => {
     const monitor = {
         id: "a71b7166", description: "MAUI release/11.0.1xx-rc2",

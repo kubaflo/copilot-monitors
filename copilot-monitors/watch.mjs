@@ -180,16 +180,6 @@ export function buildMessage(build, timeline, url) {
         + (failed.length ? ` Failed jobs: ${names(failed)}.` : "") + ` ${url}`;
 }
 
-export function branchMessage(repo, branch, previous, head, comparison) {
-    const commits = comparison.commits ?? [];
-    const count = comparison.ahead_by ?? commits.length;
-    const titles = commits.slice(-5).map((commit) => commit.commit.message.split("\n")[0]);
-    const changes = titles.length ? `: ${titles.join("; ")}` : "";
-    return `${repo} ${branch} moved ${previous.slice(0, 10)} -> ${head.slice(0, 10)} `
-        + `(${comparison.status}, ${count} new commit${count === 1 ? "" : "s"})${changes}. `
-        + `https://github.com/${repo}/tree/${branch.split("/").map(encodeURIComponent).join("/")}`;
-}
-
 export function branchChecksMessage(repo, branch, head, checks) {
     if (!checks.length || checks.some((check) => check.status !== "completed")) return null;
     const states = checks.map((check) => stageState(check.status, check.conclusion));
@@ -386,7 +376,6 @@ function branchStages(checks) {
 export async function watchBranch(repo, branch, {
     getCommit = () => githubApi(`repos/${repo}/commits/${encodeURIComponent(branch)}`),
     getChecks = (head) => branchCurrentChecks(repo, head),
-    compare = (previous, head) => githubApi(`repos/${repo}/compare/${previous}...${head}`),
     wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     emit = (line) => process.stdout.write(`${line}\n`),
     report = reportProgress,
@@ -422,6 +411,7 @@ export async function watchBranch(repo, branch, {
         }
     }
     let reportedComplete = Boolean(branchChecksMessage(repo, branch, previous, checks));
+    let lastError;
     report("waiting", getIntervalMs(), branchStages(checks));
     for (let errors = 0; ;) {
         await wait(getIntervalMs());
@@ -431,17 +421,10 @@ export async function watchBranch(repo, branch, {
             if (head !== previous) report("checking", undefined, []);
             checks = await getChecks(head);
             if (head !== previous) {
-                let line;
-                try {
-                    line = branchMessage(repo, branch, previous, head, await compare(previous, head));
-                } catch (error) {
-                    line = `${repo} ${branch} moved ${previous.slice(0, 10)} -> ${head.slice(0, 10)}; `
-                        + `commit comparison unavailable: ${error.message}. https://github.com/${repo}/tree/${encodeURIComponent(branch)}`;
-                }
-                emit(line);
                 previous = head;
                 reportedComplete = false;
             }
+            if (lastError) emit(`Watching ${repo} ${branch}: branch CI access recovered.`);
             const ciMessage = branchChecksMessage(repo, branch, head, checks);
             if (ciMessage) {
                 if (!reportedComplete) emit(ciMessage);
@@ -450,9 +433,12 @@ export async function watchBranch(repo, branch, {
                 reportedComplete = false;
             }
             errors = 0;
+            lastError = null;
             report("waiting", getIntervalMs(), branchStages(checks));
         } catch (error) {
             if (error.permanent || ++errors >= MAX_ERRORS) throw error;
+            if (error.message !== lastError) emit(`Branch watch error for ${repo} ${branch}: ${error.message}`);
+            lastError = error.message;
             report("retrying", getIntervalMs());
         }
     }
@@ -524,7 +510,6 @@ export async function watchPullRequest(repo, number, {
                 return `${label} ${current.state.toLowerCase()}; watch ended. ${target}`;
             }
             if (head && head !== current.headRefOid) {
-                emit(`${label} head moved ${head.slice(0, 10)} -> ${current.headRefOid.slice(0, 10)}. ${target}`);
                 reportedComplete = false;
             }
             head = current.headRefOid;

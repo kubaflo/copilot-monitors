@@ -101,7 +101,7 @@ function watchActivity(monitor) {
     const branch = monitor.description.startsWith("Branch ");
     const label = monitor.phase === "checking" ? "Checking now"
         : monitor.phase === "retrying" ? "Retrying check"
-        : branch ? "Waiting for CI or new commits"
+        : branch ? "Waiting for CI"
         : monitor.progress ? "Waiting for checks" : "Listening for changes";
     heading.append(node("span", "", label));
     if (monitor.progress) {

@@ -15,7 +15,7 @@ without an agent turn:
   tracks PR checks across pushes until the PR closes or merges
 - `https://github.com/owner/repo/actions/runs/123` — waits for a GitHub
   Actions run
-- `https://github.com/owner/repo/tree/main` — tracks new commits and CI
+- `https://github.com/owner/repo/tree/main` — tracks only CI
   checks on the latest commit, including checks already in progress; the
   branch name must be one URL segment
 - `https://dev.azure.com/org/project/_build/results?buildId=123` (or
@@ -29,11 +29,13 @@ CI watches send a message to chat when a cycle finishes, with the result and
 failed jobs. PR watches stay running across pushes and same-head CI reruns;
 their follow-ups run after completed checks, not merely on a new push. They
 stop when the PR closes or merges. Branch watches also report completed CI
-checks attached to their current head, as well as new commits; already-completed
+checks attached to their current head; already-completed
 branch checks at startup do not send an alert. Changes to an already-completed
 check inventory do not repeat that alert; a new in-progress CI cycle on the
 same head can report its completion. Actions-run and Azure-build links are
-one-shot.
+one-shot. PR and branch head changes are tracked internally for correct CI
+identity and progress, but never emit commit alerts or fetch commit comparisons.
+Meaningful CI-access errors and recovery notifications remain visible.
 These use
 `watch.mjs` with `gh` or the Azure DevOps REST API (anonymously, falling back
 to `az login` for private projects). Polling runs locally without invoking AI.
@@ -73,7 +75,7 @@ a follow-up prompt to run when a watch or CI cycle finishes.
 For a built-in branch watch, a follow-up runs once for already-completed checks
 when configured, then once for each subsequent completed CI cycle. Saving
 the same prompt again or polling an unchanged completed cycle does not repost
-it. Branch-head changes still alert but do not run that follow-up.
+it. Branch-head changes neither alert nor run that follow-up.
 Chat shows a short `Monitor: <name> <status>.` label instead of the raw
 watch notification; when a follow-up runs, it also shows
 `Custom prompt: <prompt>` above the agent's answer. The complete event output
@@ -160,7 +162,8 @@ and `followUpOnOutputPrefix: "Azure branch CI finished:"`. To act as soon as
 `--notify-pipeline` with other names to notify when any selected pipeline
 finishes; use the common `"Azure branch CI finished:"` prefix for all of them.
 The other pipelines remain visible in progress but do not delay notifications.
-Branch-head changes and access errors remain ordinary alerts. A completed
+Branch-head changes are silent; CI-access errors and recovery remain ordinary
+alerts. No extra status-only flag is needed. A completed
 build already present on the first poll is shown without an initial follow-up;
 start the watch before pushing or inspect the existing result yourself.
 The example requires public
